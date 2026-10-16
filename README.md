@@ -1,27 +1,40 @@
 # PSA Lyric
 
-PSA 车机本地播放器歌词悬浮伴侣。目标设备：Android 9 车机，1920×720 参考布局，ARM64 实车环境。
+PSA 车机本地播放器歌词悬浮伴侣。目标：Android 9 车机，1920×720 参考布局，ARM64 实车环境。
 
-## 当前目标
+## 已冻结产品行为
 
-- 从当前活跃的车机本地播放器（QQ 音乐、网易云音乐等）读取 MediaSession 元数据和播放状态。
-- 右下区域提供独立歌词悬浮窗，不依赖 CarLife 音频播放；CarLife 仅作为导航底图。
-- Apple Music 风格歌词滚动、逐字进度、弹簧滚动、非当前行缩放/模糊、辉光、动态颜色、对唱布局和平衡换行。
-- 封面模糊背景；“屏幕背景模糊”在 Android 9 上需要额外捕获方案，见决策记录。
-- 支持悬浮窗触摸穿透、拖动/缩放、播放暂停/上一首/下一首，以及可选的歌词跳转播放进度。
-- 主悬浮窗与顶部/通知区域歌词之间可按前台应用规则自动切换。
-- CI 只产出未签名（或 CI 调试）APK；最终签名、安装和 ADB 实车/模拟器验证由项目所有者完成。
+- 车机 QQ 音乐、网易云等继续播放音频；CarLife 只导航。
+- NotificationListenerService + MediaSession 读取当前活跃播放器。
+- 主显示为右侧**全高** Apple Music 风格歌词卡片；1920×720 默认设计矩形为 `1373,10 / 535×700`。
+- 回到车机 Launcher 自动切换为贴顶/状态栏高度的细歌词 Overlay。
+- md3Music Apple 歌词行为基线：0.35 当前行锚位、0.85 非当前行缩放、弹簧滚动、逐字时间、动态色、模糊、辉光、对唱、平衡换行。
+- 默认字号 29、字重 600、行间距 0.9×。
+- 拖动歌词只浏览；双击歌词行 seek；5 秒自动回弹。
+- 上一首 / 播放暂停 / 下一首带按压回弹。
+- 背景默认专辑封面高斯模糊；可选 MediaProjection 屏幕背景模糊。
+- 歌词优先级：本地 → 网易云 YRC/LRC → QQ → 酷狗。
+- 支持悬浮窗触摸穿透。
 
-## 参考边界
+## 实现
 
-本项目为独立实现。参考项目仅用于理解功能、交互和动画行为，不直接复制其源码或资源。
+技术栈：原生 Android Kotlin + 自定义 Canvas/View。参考项目只用于理解行为，不复制其源码或资源。
 
-- zuo-qirun/Lyrics-Companion：媒体会话、悬浮窗、歌词来源/校准、前台应用检测等实现思路参考。
-- zzyoxml/md3Music：Apple 风格歌词的视觉与运动行为参考。
-- 上传的需求说明、截图和两段视频作为目标效果基准。
+当前仓库已经包含：
+- Android 9 工程骨架
+- MediaSession 活跃播放器选择与播放位置插值
+- 本地/网易云/QQ/酷狗歌词 Provider
+- LRC/YRC 解析、翻译/罗马音模型
+- Apple 风格滚动/缩放/模糊/辉光/动态色/对唱/平衡换行
+- Launcher 顶部细歌词 Overlay
+- MediaProjection 屏幕背景模式
+- 设置/权限页
+- GitHub Actions 未签名 Release APK 构建
 
-详见 [docs/PROJECT_SPEC.md](docs/PROJECT_SPEC.md)、[docs/REFERENCE_AUDIT.md](docs/REFERENCE_AUDIT.md) 和 [docs/DECISIONS.md](docs/DECISIONS.md)。
+详见 [docs/PROJECT_SPEC.md](docs/PROJECT_SPEC.md)、[docs/REFERENCE_AUDIT.md](docs/REFERENCE_AUDIT.md)、[docs/DECISIONS.md](docs/DECISIONS.md)。
 
-## 状态
+许可证：AGPL-3.0-only。
 
-2026-10-16：需求素材与两个参考仓库完成第一轮静态审查；目标仓库初始化。实现前仍有数个会改变架构/权限边界的“大功能决策”等待项目所有者确认。
+## 分工
+
+GitHub Actions 产出未签名 APK + SHA-256；项目所有者负责最终签名和安装，随后由 Codex 通过 ADB 做 Android 9 模拟器/实车验证。
