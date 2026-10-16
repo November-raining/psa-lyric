@@ -6,7 +6,6 @@ import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -44,47 +43,8 @@ private val FALLBACK_HTTP = HttpPolicy(connectMs = 4_000, readMs = 5_500, attemp
 object LocalLyricProvider : LyricProvider {
     override val name = "本地"
 
-    override fun load(context: Context, query: TrackQuery): LyricDocument? {
-        // Automatic app-private cache is always active and requires no storage permission.
-        // It is checked before the optional user-provided external lyric directory.
-        LyricDiskCache.load(context, query)?.let { return it }
-
-        val dir = Prefs.localLyricDir(context)
-        if (dir.isBlank()) return null
-        val root = File(dir)
-        if (!root.isDirectory) return null
-
-        val baseNames = listOf(
-            "${safe(query.title)} - ${safe(query.artist)}",
-            safe(query.title)
-        )
-        val extensions = listOf("qrc", "yrc", "krc", "lrc")
-        for (base in baseNames) {
-            for (ext in extensions) {
-                val file = File(root, "$base.$ext")
-                if (!file.isFile) continue
-                val bytes = file.readBytes()
-                val text = decodeText(bytes)
-                val doc = when (ext) {
-                    "krc" -> {
-                        val decrypted = KrcCodec.decrypt(bytes)
-                        LyricDocument(LyricParsers.parseKrc(decrypted), source = "本地 · KRC")
-                    }
-                    "yrc" -> LyricDocument(LyricParsers.parseYrc(text), source = "本地 · YRC")
-                    "qrc" -> {
-                        val enhanced = QrcLyricCodec.toEnhancedTimeline(text)
-                        LyricDocument(LyricParsers.parseYrc(enhanced), source = "本地 · QRC")
-                    }
-                    else -> LyricParsers.parse(text).copy(source = "本地 · LRC")
-                }
-                if (doc.lines.isNotEmpty()) return doc
-            }
-        }
-        return null
-    }
-
-    private fun safe(v: String) =
-        v.replace(Regex("""[\\/:*?"<>|]"""), "_").trim()
+    override fun load(context: Context, query: TrackQuery): LyricDocument? =
+        LyricDiskCache.load(context, query)
 }
 
 object QQLyricProvider : LyricProvider {

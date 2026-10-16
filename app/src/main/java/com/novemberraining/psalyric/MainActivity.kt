@@ -1,6 +1,5 @@
 package com.novemberraining.psalyric
 
-import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
@@ -17,7 +16,6 @@ import android.widget.*
 class MainActivity : Activity() {
     companion object {
         private const val REQ_CAPTURE = 41
-        private const val REQ_STORAGE = 42
     }
 
     private lateinit var root: LinearLayout
@@ -70,9 +68,6 @@ class MainActivity : Activity() {
         }
         button(if (ForegroundAppDetector.hasUsageAccess(this)) "使用情况访问：已授权" else "授权使用情况访问") {
             startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-        }
-        button("授权额外外部歌词目录读取") {
-            requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_STORAGE)
         }
 
         section("悬浮歌词")
@@ -148,15 +143,24 @@ class MainActivity : Activity() {
                 "任何成功匹配的逐字/逐行歌词都会自动保存；切歌再回来优先直接读本地缓存。"
         )
 
-        val path = EditText(this).apply {
-            hint = "额外外部歌词目录（可选），例如 /sdcard/Lyrics"
-            setText(Prefs.localLyricDir(this@MainActivity))
-            setTextColor(Color.WHITE)
-            setHintTextColor(0xFF718096.toInt())
+        toggle("显示歌词副行（翻译 / 罗马音）", Prefs.secondaryLyricEnabled(this)) {
+            Prefs.setSecondaryLyricEnabled(this, it)
         }
-        root.addView(path, LinearLayout.LayoutParams(-1, dp(52)))
-        button("保存额外外部歌词目录") { Prefs.setLocalLyricDir(this, path.text.toString()) }
-        note("优先级：自动本地缓存 / 外部本地逐字 → QQ QRC（优先窗口）→ 酷狗 KRC / 网易云 YRC 并发备份；都没有逐字时才回退 LRC。")
+        toggle(
+            "副行显示罗马音 / 发音（关闭 = 翻译）",
+            Prefs.secondaryLyricMode(this) == LyricSecondaryRules.MODE_ROMAJI
+        ) {
+            Prefs.setSecondaryLyricMode(
+                this,
+                if (it) LyricSecondaryRules.MODE_ROMAJI
+                else LyricSecondaryRules.MODE_TRANSLATION
+            )
+        }
+        note(
+            "副行采用固定模式，不再自动互相顶替：翻译模式只显示翻译；罗马音模式只显示罗马音/发音；" +
+                "所选内容缺失时该句不显示副行。默认开启副行并使用翻译。"
+        )
+        note("优先级：自动本地缓存 → QQ QRC（优先窗口）→ 酷狗 KRC / 网易云 YRC 并发备份；都没有逐字时才回退 LRC。")
 
         section("诊断")
         diagnosticView = note("")
