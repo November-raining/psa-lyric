@@ -136,7 +136,12 @@ class MainActivity : Activity() {
         toggle("高斯模糊", Prefs.gaussianBlur(this)) { Prefs.setGaussianBlur(this, it) }
         toggle("光辉效果", Prefs.glow(this)) { Prefs.setGlow(this, it) }
         toggle("平衡换行", Prefs.balancedWrap(this)) { Prefs.setBalancedWrap(this, it) }
-        note("当前行锚位 0.35、非当前行缩放 0.85、缩放弹簧 2/100/25；滚动弹簧按相邻歌词间隔动态取 110–140，阻尼 √k×2.2。拖动浏览后 5 秒回弹；双击歌词行 seek。")
+        note(
+            "动效基线沿用 md3Music / AMLL：当前歌词中心停在窗口高度 35%；非当前行缩到 85%；" +
+                "行缩放弹簧 mass=2 / stiffness=100 / damping=25。滚动弹簧会按相邻歌词间隔在 110–140 之间自动调刚度，" +
+                "阻尼为 √k×2.2。逐字高亮使用行级渐变遮罩而不是整字跳亮；已播字最大上浮约 3 px。" +
+                "拖动浏览后 5 秒回弹；双击歌词行 seek。"
+        )
 
         section("背景")
         toggle("使用所在屏幕背景高斯模糊（MediaProjection，高级）", Prefs.backgroundMode(this) == "screen") { checked ->
