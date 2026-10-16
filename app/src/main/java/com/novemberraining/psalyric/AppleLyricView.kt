@@ -190,19 +190,19 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
                     stiffness = AppleMotion.SCALE_STIFFNESS,
                     damping = AppleMotion.SCALE_DAMPING
                 )
-            }.setTarget(AppleMotion.ACTIVE_SCALE)
+            }.retarget(AppleMotion.ACTIVE_SCALE)
             if (old >= 0) scales.getOrPut(old) {
                 Spring1D(position = AppleMotion.ACTIVE_SCALE, target = AppleMotion.INACTIVE_SCALE,
                     mass = AppleMotion.SCALE_MASS, stiffness = AppleMotion.SCALE_STIFFNESS,
                     damping = AppleMotion.SCALE_DAMPING)
-            }.setTarget(AppleMotion.INACTIVE_SCALE)
+            }.retarget(AppleMotion.INACTIVE_SCALE)
         }
         for (i in max(0, index - 7)..min(visual.lastIndex, index + 9)) {
             val target = if (i == index) AppleMotion.ACTIVE_SCALE else AppleMotion.INACTIVE_SCALE
             scales.getOrPut(i) {
                 Spring1D(position = target, target = target, mass = AppleMotion.SCALE_MASS,
                     stiffness = AppleMotion.SCALE_STIFFNESS, damping = AppleMotion.SCALE_DAMPING)
-            }.setTarget(target)
+            }.retarget(target)
         }
 
         if (!browsing) {
@@ -218,7 +218,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             if (firstLayout) {
                 scroll.snap(target)
                 firstLayout = false
-            } else scroll.setTarget(target)
+            } else scroll.retarget(target)
         }
     }
 
@@ -377,7 +377,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
                     val vy = velocity?.yVelocity ?: 0f
                     val inertia = (vy * 0.30f).coerceIn(-300f, 300f)
                     scroll.velocity = vy
-                    scroll.setTarget(scroll.position + inertia)
+                    scroll.retarget(scroll.position + inertia)
                     autoReturnAt = SystemClock.elapsedRealtime() + 5_000L
                 } else if (moved < 10f) {
                     val now = SystemClock.elapsedRealtime()
@@ -403,7 +403,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             else -> 2
         }
         buttonScales[index].snap(0.78f)
-        buttonScales[index].setTarget(1f)
+        buttonScales[index].retarget(1f)
         when (index) {
             0 -> PlaybackStore.previous()
             1 -> PlaybackStore.playPause()
