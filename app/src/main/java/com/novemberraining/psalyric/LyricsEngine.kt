@@ -91,7 +91,10 @@ object LyricsEngine {
         cache[key]?.let { cached ->
             if (trackKey(PlaybackStore.snapshot) == key) {
                 LyricStore.document = cached
-                if (documentSatisfiesSecondary(context, cached)) {
+                if (
+                    documentSatisfiesSecondary(context, cached) &&
+                    !duetNeedsEnrichment(context, snapshot.artist, cached)
+                ) {
                     diagnostics = diagnosticFor(
                         key = key,
                         state = "cache-hit",
@@ -130,7 +133,10 @@ object LyricsEngine {
         val localDocument = localOutcome.document
         if (localDocument?.hasWordTimings == true) {
             LyricStore.document = localDocument
-            if (documentSatisfiesSecondary(context, localDocument)) {
+            if (
+                documentSatisfiesSecondary(context, localDocument) &&
+                !duetNeedsEnrichment(context, query.artist, localDocument)
+            ) {
                 finishMatch(context, key, localDocument, "matched-word", status, startedAt)
                 return
             }
@@ -170,7 +176,8 @@ object LyricsEngine {
                 val qq = status["QQ"]
                 if (
                     qq?.document?.hasWordTimings == true &&
-                    documentSatisfiesSecondary(context, qq.document)
+                    documentSatisfiesSecondary(context, qq.document) &&
+                    !duetNeedsEnrichment(context, query.artist, qq.document)
                 ) {
                     finishMatch(context, key, qq.document, "matched-word", status, startedAt)
                     return
@@ -178,7 +185,11 @@ object LyricsEngine {
 
                 val backupWord = preferredBackupWord(context, status, requireSecondary = true)
                 val qqFinished = qq != null
-                if (backupWord != null && (qqFinished || elapsed >= QQ_GRACE_MS)) {
+                if (
+                    backupWord != null &&
+                    !duetNeedsEnrichment(context, query.artist, backupWord) &&
+                    (qqFinished || elapsed >= QQ_GRACE_MS)
+                ) {
                     finishMatch(context, key, backupWord, "matched-word", status, startedAt)
                     return
                 }
@@ -350,6 +361,15 @@ object LyricsEngine {
         )
     }
 
+    private fun duetNeedsEnrichment(
+        context: Context,
+        artist: String?,
+        document: LyricDocument
+    ): Boolean =
+        Prefs.duet(context) &&
+            ArtistSelection.looksCollaborative(artist.orEmpty()) &&
+            !DuetRoleEnricher.hasSplit(document)
+
     private fun secondarySignature(context: Context): String =
         if (!Prefs.secondaryLyricEnabled(context)) {
             "off"
@@ -370,7 +390,17 @@ object LyricsEngine {
     ) {
         val current = PlaybackStore.snapshot
         if (trackKey(current) != key) return
-        store(key, document)
+
+        val finalDocument = if (Prefs.duet(context)) {
+            DuetRoleEnricher.enrich(
+                document,
+                status.values.mapNotNull { it?.document }
+            )
+        } else {
+            document
+        }
+
+        store(key, finalDocument)
         if (state == "matched-word-secondary-unavailable") {
             retryAfterElapsed = SystemClock.elapsedRealtime() + SECONDARY_RETRY_MS
         }
@@ -386,14 +416,14 @@ object LyricsEngine {
                 current.artist,
                 current.durationMs
             ),
-            document
+            finalDocument
         )
 
         diagnostics = diagnosticFor(
             key = key,
             state = state,
             attempts = formatAttempts(status),
-            document = document,
+            document = finalDocument,
             elapsedMs = SystemClock.elapsedRealtime() - startedAt
         )
     }
@@ -413,6 +443,10 @@ object LyricsEngine {
                     if (outcome.document.romajiLineCount > 0) {
                         append("+R").append(outcome.document.romajiLineCount)
                     }
+                    val duet = DuetRoleEnricher.stats(outcome.document)
+                    if (duet.hasSplit) {
+                        append("+D").append(duet.right).append("/").append(duet.center)
+                    }
                 }
                 else -> buildString {
                     append("LRC")
@@ -421,6 +455,10 @@ object LyricsEngine {
                     }
                     if (outcome.document.romajiLineCount > 0) {
                         append("+R").append(outcome.document.romajiLineCount)
+                    }
+                    val duet = DuetRoleEnricher.stats(outcome.document)
+                    if (duet.hasSplit) {
+                        append("+D").append(duet.right).append("/").append(duet.center)
                     }
                 }
             }
