@@ -22,12 +22,19 @@ data class AppleEmphasizeState(
             abs(floatYEm) < 0.0001f
 }
 
+data class AppleEmphasizePhases(
+    val bumpPhase: Double,
+    val floatPhase: Double
+)
+
 /**
  * AMLL/md3Music long-word emphasis wave.
  *
- * Long syllables are animated per glyph rather than moving one whole word in a
- * few visible steps. Characters start left-to-right, gently scale/float/glow,
- * then settle with a tail that may continue after the next timing unit begins.
+ * The absolute-time API remains useful for tests and anchoring, but production
+ * rendering now advances the returned phases from the display frame clock via
+ * AppleEmphasizeTrack. That mirrors md3Music v6/v8: playback time establishes
+ * phase once, then dt advances it continuously and lets the previous timing word
+ * finish its tail after the next word begins.
  */
 object AppleEmphasizeMotion {
     private const val STAGGER_SPREAD_DIVISOR = 2.5
@@ -43,12 +50,35 @@ object AppleEmphasizeMotion {
     private const val OFFSET_Y_FACTOR = 0.025
     private const val FLOAT_AMP_EM = 0.05
     private const val FLOAT_LEAD_MS = 400.0
-    private const val FLOAT_DURATION_FACTOR = 1.4
+    const val FLOAT_DURATION_FACTOR = 1.4
     private const val FLOAT_EDGE_FADE = 0.15
 
-    fun state(
+    fun duMs(word: WordTiming): Double = maxOf(1000.0, word.durationMs.toDouble())
+
+    fun phasesAt(
         word: WordTiming,
         positionMs: Long,
+        charIndex: Int,
+        charCount: Int
+    ): AppleEmphasizePhases {
+        if (word.durationMs <= 0L || charCount <= 0 || charIndex !in 0 until charCount) {
+            return AppleEmphasizePhases(1.0, 1.0)
+        }
+        val du = duMs(word)
+        val charDelay = (du / STAGGER_SPREAD_DIVISOR / charCount) * charIndex
+        val wordDelay = word.startMs + charDelay
+        return AppleEmphasizePhases(
+            bumpPhase = (positionMs - wordDelay) / du,
+            floatPhase =
+                (positionMs - (wordDelay - FLOAT_LEAD_MS)) /
+                    (du * FLOAT_DURATION_FACTOR)
+        )
+    }
+
+    fun stateFromPhases(
+        word: WordTiming,
+        bumpPhase: Double,
+        floatPhase: Double,
         charIndex: Int,
         charCount: Int,
         isLastWord: Boolean
@@ -56,14 +86,6 @@ object AppleEmphasizeMotion {
         if (word.durationMs <= 0L || charCount <= 0 || charIndex !in 0 until charCount) {
             return AppleEmphasizeState()
         }
-
-        val duration = word.durationMs.toDouble()
-        val du = maxOf(1000.0, duration)
-        val charDelay = (du / STAGGER_SPREAD_DIVISOR / charCount) * charIndex
-        val wordDelay = word.startMs + charDelay
-        val bumpPhase = (positionMs - wordDelay) / du
-        val floatPhase =
-            (positionMs - (wordDelay - FLOAT_LEAD_MS)) / (du * FLOAT_DURATION_FACTOR)
 
         val bumpActive = bumpPhase in 0.0..1.0
         val floatActive = floatPhase in 0.0..1.0
@@ -89,6 +111,7 @@ object AppleEmphasizeMotion {
             -sin(PI * floatPhase) * FLOAT_AMP_EM * edgeFade
         } else 0.0
 
+        val duration = word.durationMs.toDouble()
         var amount = sqrt(duration / 2000.0) * AMOUNT_SCALE
         amount = min(amount, AMOUNT_CAP)
         var blur = min(duration / 3000.0 * BLUR_SCALE, BLUR_CAP)
@@ -109,6 +132,24 @@ object AppleEmphasizeMotion {
         )
 
         return if (state.isIdle) AppleEmphasizeState() else state
+    }
+
+    fun state(
+        word: WordTiming,
+        positionMs: Long,
+        charIndex: Int,
+        charCount: Int,
+        isLastWord: Boolean
+    ): AppleEmphasizeState {
+        val phases = phasesAt(word, positionMs, charIndex, charCount)
+        return stateFromPhases(
+            word = word,
+            bumpPhase = phases.bumpPhase,
+            floatPhase = phases.floatPhase,
+            charIndex = charIndex,
+            charCount = charCount,
+            isLastWord = isLastWord
+        )
     }
 
     private fun cubicBezier(t: Double, p1: Double, p2: Double): Double {
