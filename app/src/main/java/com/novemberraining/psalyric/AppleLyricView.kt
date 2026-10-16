@@ -435,7 +435,13 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
 
             canvas.save()
             canvas.scale(scale, scale, pivotX, centerY)
-            val blurRadius = dist.coerceIn(1, 5) * 0.85f * (height / 700f) * blurFade
+            val blurRadius = AppleVisualTuning.blurRadius(
+                distanceFromCurrent = dist,
+                strengthPercent = Prefs.gaussianBlurStrength(context),
+                distanceBoostPercent = Prefs.gaussianBlurDistanceBoost(context),
+                heightScale = height / 700f,
+                fade = blurFade
+            )
             textPaint.maskFilter = if (!active && Prefs.gaussianBlur(context) && blurRadius > 0.05f) {
                 BlurMaskFilter(blurRadius, BlurMaskFilter.Blur.NORMAL)
             } else null
@@ -443,7 +449,13 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             textPaint.color = if (active) accent else Color.WHITE
             textPaint.alpha = drawAlpha
             if (active && line.words.isEmpty() && Prefs.glow(context)) {
-                textPaint.setShadowLayer(5f * height / 700f, 0f, 0f, accent)
+                textPaint.setShadowLayer(
+                    5f * height / 700f *
+                        AppleVisualTuning.glowScale(Prefs.glowIntensity(context)),
+                    0f,
+                    0f,
+                    accent
+                )
             } else {
                 textPaint.clearShadowLayer()
             }
@@ -622,11 +634,22 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             textPaint.textSize = font
             textPaint.maskFilter = null
             if (glowProgress > 0.001f) {
+                val glowIntensity = Prefs.glowIntensity(context)
                 textPaint.setShadowLayer(
-                    font * 0.24f * glowProgress,
+                    AppleVisualTuning.glowRadius(
+                        fontPx = font,
+                        progress = glowProgress,
+                        intensity = glowIntensity
+                    ),
                     0f,
                     0f,
-                    withAlpha(accent, (220f * glowProgress).toInt())
+                    withAlpha(
+                        accent,
+                        AppleVisualTuning.glowAlpha(
+                            progress = glowProgress,
+                            intensity = glowIntensity
+                        )
+                    )
                 )
             } else {
                 textPaint.clearShadowLayer()
