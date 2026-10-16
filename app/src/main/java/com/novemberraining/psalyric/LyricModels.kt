@@ -32,6 +32,12 @@ data class LyricDocument(
         val EMPTY = LyricDocument(emptyList())
     }
 
+    val hasWordTimings: Boolean
+        get() = lines.any { it.words.isNotEmpty() }
+
+    val timedWordCount: Int
+        get() = lines.sumOf { it.words.size }
+
     fun currentIndex(positionMs: Long): Int {
         if (lines.isEmpty()) return -1
         var lo = 0

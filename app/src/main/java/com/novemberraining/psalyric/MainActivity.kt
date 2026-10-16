@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
@@ -19,6 +21,14 @@ class MainActivity : Activity() {
     }
 
     private lateinit var root: LinearLayout
+    private var diagnosticView: TextView? = null
+    private val diagnosticHandler = Handler(Looper.getMainLooper())
+    private val diagnosticTick = object : Runnable {
+        override fun run() {
+            updateDiagnostics()
+            diagnosticHandler.postDelayed(this, 500L)
+        }
+    }
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -37,6 +47,13 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::root.isInitialized) rebuild()
+        diagnosticHandler.removeCallbacks(diagnosticTick)
+        diagnosticHandler.post(diagnosticTick)
+    }
+
+    override fun onPause() {
+        diagnosticHandler.removeCallbacks(diagnosticTick)
+        super.onPause()
     }
 
     private fun rebuild() {
@@ -128,11 +145,11 @@ class MainActivity : Activity() {
         }
         root.addView(path, LinearLayout.LayoutParams(-1, dp(52)))
         button("保存本地歌词目录") { Prefs.setLocalLyricDir(this, path.text.toString()) }
-        note("优先级：本地 LRC/KRC 可转写内容 → 网易云 YRC/LRC → QQ → 酷狗。播放器来源与歌词来源解耦。")
+        note("优先级：逐字优先（本地逐字 → QQ QRC → 网易云 YRC → 酷狗 KRC），都没有逐字时才回退本地/在线 LRC。播放器来源与歌词来源解耦。")
 
         section("诊断")
-        val s = PlaybackStore.snapshot
-        note("播放器：${s.packageName.ifBlank { "未检测" }}\n歌曲：${s.title} / ${s.artist}\n歌词源：${LyricStore.document.source.ifBlank { "未匹配" }}\n前台应用：${ForegroundAppDetector.foregroundPackage(this).ifBlank { "未知/未授权" }}")
+        diagnosticView = note("")
+        updateDiagnostics()
         button("刷新服务") { refreshService(recreate = true) }
     }
 
@@ -182,12 +199,40 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun note(value: String) {
-        root.addView(TextView(this).apply {
+    private fun note(value: String): TextView {
+        val view = TextView(this).apply {
             text = value; textSize = 13f; setTextColor(0xFFB6C2D2.toInt())
             setLineSpacing(0f, 1.25f)
             setPadding(0, dp(7), 0, dp(7))
-        })
+        }
+        root.addView(view)
+        return view
+    }
+
+    private fun updateDiagnostics() {
+        val s = PlaybackStore.snapshot
+        val media = PlaybackStore.diagnostics
+        val lyric = LyricsEngine.diagnostics
+        val position = s.estimatedPosition()
+        diagnosticView?.text = buildString {
+            append("播放器：").append(s.packageName.ifBlank { "未检测" })
+            append("\n歌曲：").append(s.title).append(" / ").append(s.artist)
+            append("\n媒体状态：state=").append(s.state)
+                .append(" pos=").append(position)
+                .append("ms sessions=").append(media.activeSessionCount)
+                .append(" [").append(media.reason).append("]")
+            append("\n歌词源：").append(LyricStore.document.source.ifBlank { "未匹配" })
+            append("；").append(if (lyric.wordTimed) "逐字" else "逐行")
+            append(" lines=").append(lyric.lineCount)
+                .append(" words=").append(lyric.wordCount)
+            append("\n匹配状态：").append(lyric.state)
+            if (lyric.attempts.isNotBlank()) {
+                append("\n匹配链：").append(lyric.attempts)
+            }
+            append("\n前台应用：")
+                .append(ForegroundAppDetector.foregroundPackage(this@MainActivity)
+                    .ifBlank { "未知/未授权" })
+        }
     }
 
     private fun button(label: String, onClick: () -> Unit) {
