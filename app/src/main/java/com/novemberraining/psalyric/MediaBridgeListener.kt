@@ -202,11 +202,14 @@ class MediaBridgeListener : NotificationListenerService() {
             MediaMetadata.METADATA_KEY_TITLE,
             MediaMetadata.METADATA_KEY_DISPLAY_TITLE
         )
-        val artist = firstNonEmpty(
-            md,
-            MediaMetadata.METADATA_KEY_ARTIST,
-            MediaMetadata.METADATA_KEY_ALBUM_ARTIST,
-            MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE
+        val queueSubtitle = queueSubtitle(c, st, title)
+        val artist = ArtistSelection.choose(
+            artist = md?.getString(MediaMetadata.METADATA_KEY_ARTIST).orEmpty(),
+            albumArtist = md?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST).orEmpty(),
+            displaySubtitle = md?.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE).orEmpty(),
+            queueSubtitle = queueSubtitle,
+            album = md?.getString(MediaMetadata.METADATA_KEY_ALBUM).orEmpty(),
+            title = title
         )
         val snapshot = PlaybackSnapshot(
             packageName = c.packageName,
@@ -241,6 +244,29 @@ class MediaBridgeListener : NotificationListenerService() {
             state = state?.state ?: previous.state
         )
         PlaybackStore.publish(c, snapshot, count, "retained-transient-metadata")
+    }
+
+    private fun queueSubtitle(
+        controller: MediaController,
+        state: PlaybackState?,
+        title: String
+    ): String {
+        val queue = try {
+            controller.queue
+        } catch (_: Throwable) {
+            null
+        } ?: return ""
+
+        val activeId = state?.activeQueueItemId ?: MediaSession.QueueItem.UNKNOWN_ID
+        val active = if (activeId != MediaSession.QueueItem.UNKNOWN_ID) {
+            queue.firstOrNull { it.queueId == activeId }
+        } else {
+            null
+        }
+        val item = active ?: queue.firstOrNull {
+            it.description.title?.toString()?.trim().orEmpty() == title.trim()
+        }
+        return item?.description?.subtitle?.toString()?.trim().orEmpty()
     }
 
     private fun isUsableSession(
