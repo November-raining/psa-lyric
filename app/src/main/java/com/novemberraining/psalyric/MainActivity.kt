@@ -145,7 +145,7 @@ class MainActivity : Activity() {
         }
         root.addView(path, LinearLayout.LayoutParams(-1, dp(52)))
         button("保存本地歌词目录") { Prefs.setLocalLyricDir(this, path.text.toString()) }
-        note("优先级：逐字优先（本地逐字 → QQ QRC → 网易云 YRC → 酷狗 KRC），都没有逐字时才回退本地/在线 LRC。播放器来源与歌词来源解耦。")
+        note("优先级：本地逐字 → QQ QRC（优先窗口）→ 酷狗 KRC / 网易云 YRC 并发备份；都没有逐字时才回退 LRC。在线逐字通道短超时、单次尝试。")
 
         section("诊断")
         diagnosticView = note("")
@@ -213,6 +213,7 @@ class MainActivity : Activity() {
         val s = PlaybackStore.snapshot
         val media = PlaybackStore.diagnostics
         val lyric = LyricsEngine.diagnostics
+        val foreground = ForegroundAppDetector.info(this)
         val position = s.estimatedPosition()
         diagnosticView?.text = buildString {
             append("播放器：").append(s.packageName.ifBlank { "未检测" })
@@ -226,12 +227,22 @@ class MainActivity : Activity() {
             append(" lines=").append(lyric.lineCount)
                 .append(" words=").append(lyric.wordCount)
             append("\n匹配状态：").append(lyric.state)
+                .append(" elapsed=").append(lyric.elapsedMs).append("ms")
             if (lyric.attempts.isNotBlank()) {
                 append("\n匹配链：").append(lyric.attempts)
             }
             append("\n前台应用：")
-                .append(ForegroundAppDetector.foregroundPackage(this@MainActivity)
-                    .ifBlank { "未知/未授权" })
+            when {
+                !foreground.usageAccess -> append("未授权 [usage=NO]")
+                foreground.packageName.isNotBlank() -> {
+                    append(foreground.packageName)
+                    append(" [usage=YES source=").append(foreground.source)
+                    if (foreground.ageMs >= 0L) append(" age=").append(foreground.ageMs).append("ms")
+                    append("]")
+                }
+                else -> append("已授权但暂无事件 [usage=YES source=")
+                    .append(foreground.source).append("]")
+            }
         }
     }
 
