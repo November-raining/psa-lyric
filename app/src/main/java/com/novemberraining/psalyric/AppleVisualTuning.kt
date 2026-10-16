@@ -12,16 +12,20 @@ object AppleVisualTuning {
     const val BASE_GLOW_INTENSITY = 220
     const val BASE_BLUR_RADIUS = 0.85f
 
+    fun glowScale(intensity: Int): Float {
+        val ratio = (intensity.coerceAtLeast(1) / BASE_GLOW_INTENSITY.toFloat())
+            .coerceAtLeast(0.01f)
+        return sqrt(ratio)
+    }
+
     fun glowRadius(
         fontPx: Float,
         progress: Float,
         intensity: Int
-    ): Float {
-        val p = progress.coerceIn(0f, 1f)
-        val ratio = (intensity.coerceAtLeast(1) / BASE_GLOW_INTENSITY.toFloat())
-            .coerceAtLeast(0.01f)
-        return fontPx * 0.24f * p * sqrt(ratio)
-    }
+    ): Float =
+        fontPx * 0.24f *
+            progress.coerceIn(0f, 1f) *
+            glowScale(intensity)
 
     fun glowAlpha(
         progress: Float,
