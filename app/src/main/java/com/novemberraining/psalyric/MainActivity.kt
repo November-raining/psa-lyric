@@ -129,7 +129,14 @@ class MainActivity : Activity() {
         note("默认使用当前专辑封面模糊。屏幕捕获模式在 Android 9 需要一次系统录屏授权，默认关闭。")
 
         section("歌词匹配")
-        seek("全局歌词校准", -3000, 3000, Prefs.lyricOffsetMs(this).toInt(), " ms") {
+        seekWithReset(
+            "全局歌词校准",
+            -3000,
+            3000,
+            Prefs.lyricOffsetMs(this).toInt(),
+            " ms",
+            resetValue = 0
+        ) {
             Prefs.setLyricOffsetMs(this, it.toLong())
         }
 
@@ -295,6 +302,64 @@ class MainActivity : Activity() {
 
     private fun seek(label: String, min: Int, max: Int, value: Int, suffix: String, change: (Int) -> Unit) {
         seekFloat(label, min, max, value, suffix, change)
+    }
+
+    private fun seekWithReset(
+        label: String,
+        min: Int,
+        max: Int,
+        value: Int,
+        suffix: String,
+        resetValue: Int,
+        change: (Int) -> Unit
+    ) {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val name = TextView(this).apply {
+            text = label
+            setTextColor(Color.WHITE)
+            textSize = 14f
+        }
+        val current = TextView(this).apply {
+            text = "$value$suffix"
+            setTextColor(0xFF78C7FF.toInt())
+            textSize = 13f
+        }
+        val reset = TextView(this).apply {
+            text = "归零"
+            setTextColor(0xFF78C7FF.toInt())
+            textSize = 13f
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            setPadding(dp(12), dp(4), 0, dp(4))
+        }
+        val bar = SeekBar(this).apply {
+            this.max = max - min
+            progress = value.coerceIn(min, max) - min
+        }
+
+        reset.setOnClickListener {
+            val target = resetValue.coerceIn(min, max)
+            bar.progress = target - min
+            current.text = "$target$suffix"
+            change(target)
+        }
+
+        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(b: SeekBar?, p: Int, fromUser: Boolean) {
+                val v = min + p
+                current.text = "$v$suffix"
+                if (fromUser) change(v)
+            }
+            override fun onStartTrackingTouch(b: SeekBar?) {}
+            override fun onStopTrackingTouch(b: SeekBar?) {}
+        })
+
+        row.addView(name, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(current)
+        row.addView(reset)
+        root.addView(row)
+        root.addView(bar, LinearLayout.LayoutParams(-1, dp(38)))
     }
 
     private fun seekFloat(label: String, min: Int, max: Int, value: Int, suffix: String, change: (Int) -> Unit) {
