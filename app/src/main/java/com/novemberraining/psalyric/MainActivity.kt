@@ -268,7 +268,18 @@ class MainActivity : Activity() {
         val position = s.estimatedPosition()
         diagnosticView?.text = buildString {
             append("播放器：").append(s.packageName.ifBlank { "未检测" })
-            append("\n歌曲：").append(s.title).append(" / ").append(s.artist)
+            val resolvedDisplayArtist = ArtistSelection.chooseResolved(
+                s.artist,
+                LyricStore.document.resolvedArtist
+            )
+            append("\n歌曲：").append(s.title).append(" / ").append(resolvedDisplayArtist)
+            if (
+                resolvedDisplayArtist.isNotBlank() &&
+                s.artist.isNotBlank() &&
+                resolvedDisplayArtist != s.artist
+            ) {
+                append(" [媒体=").append(s.artist).append("]")
+            }
             append("\n媒体状态：state=").append(s.state)
                 .append(" pos=").append(position)
                 .append("ms sessions=").append(media.activeSessionCount)

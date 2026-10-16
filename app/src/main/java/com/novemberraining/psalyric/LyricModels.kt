@@ -26,7 +26,8 @@ data class LyricLine(
 
 data class LyricDocument(
     val lines: List<LyricLine>,
-    val source: String = ""
+    val source: String = "",
+    val resolvedArtist: String = ""
 ) {
     companion object {
         val EMPTY = LyricDocument(emptyList())
