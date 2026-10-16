@@ -20,12 +20,21 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         val height: Float
     )
 
-    private data class RowSlice(
+    private data class TimedSegment(
+        val wordIndex: Int,
+        val rowIndex: Int,
         val text: String,
-        val start: Int,
-        val end: Int,
-        val x: Float,
-        val baseline: Float
+        val prefixWidth: Float,
+        val width: Float,
+        val logicalStartX: Float,
+        val logicalEndX: Float
+    )
+
+    private data class TimedLineMetrics(
+        val source: String,
+        val segments: List<TimedSegment>,
+        val mask: AppleWordMask.Geometry,
+        val emphasizeFlags: BooleanArray
     )
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -34,6 +43,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
     private val scroll = Spring1D()
     private val scales = HashMap<Int, Spring1D>()
     private val wordMotions = HashMap<Int, AppleWordMotion>()
+    private val timedLineMetrics = HashMap<Int, TimedLineMetrics>()
     private val cascadeSprings = HashMap<Int, Spring1D>()
     private val cascadeStartTimes = HashMap<Int, Long>()
     private var cascadePosY = 0f
@@ -53,6 +63,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
     private var cachedSecondaryEnabled = true
     private var cachedSecondaryMode = LyricSecondaryRules.MODE_TRANSLATION
     private var cachedLineSpacing = Float.NaN
+    private var cachedFontWeight = -1
+    private var cachedBalancedWrap = true
     private var currentIndex = -1
     private var lastFrameNs = 0L
     private var firstLayout = true
@@ -178,13 +190,17 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         val secondaryEnabled = Prefs.secondaryLyricEnabled(context)
         val secondaryMode = Prefs.secondaryLyricMode(context)
         val lineSpacing = Prefs.lineSpacing(context)
+        val fontWeight = Prefs.fontWeight(context)
+        val balancedWrap = Prefs.balancedWrap(context)
         if (
             cachedDoc === doc &&
             cachedWidth == width &&
             abs(cachedFont - font) < 0.1f &&
             cachedSecondaryEnabled == secondaryEnabled &&
             cachedSecondaryMode == secondaryMode &&
-            abs(cachedLineSpacing - lineSpacing) < 0.001f
+            abs(cachedLineSpacing - lineSpacing) < 0.001f &&
+            cachedFontWeight == fontWeight &&
+            cachedBalancedWrap == balancedWrap
         ) return
         cachedDoc = doc
         cachedWidth = width
@@ -192,11 +208,14 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         cachedSecondaryEnabled = secondaryEnabled
         cachedSecondaryMode = secondaryMode
         cachedLineSpacing = lineSpacing
+        cachedFontWeight = fontWeight
+        cachedBalancedWrap = balancedWrap
         visual = buildVisual(doc, font, lineSpacing)
         firstLayout = true
         currentIndex = -1
         scales.clear()
         wordMotions.clear()
+        timedLineMetrics.clear()
         cascadeSprings.clear()
         cascadeStartTimes.clear()
         cascadePosY = scroll.position
@@ -421,7 +440,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             var y = v.top + flowOffset + scroll.position + cascade + font
             val timedDrawn = if (active && line.words.isNotEmpty()) {
                 val motion = wordMotions.getOrPut(v.index) { AppleWordMotion() }
-                motion.tick(line, positionMs, scale, true, frameDt)
+                motion.tick(line, positionMs, AppleMotion.ACTIVE_SCALE, true, frameDt)
                 drawTimedRows(
                     canvas = canvas,
                     visualLine = v,
@@ -431,7 +450,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
                     accent = accent,
                     font = font,
                     cascade = cascade,
-                    flowOffset = flowOffset
+                    flowOffset = flowOffset,
+                    lineScale = AppleMotion.ACTIVE_SCALE
                 )
             } else false
 
@@ -516,80 +536,195 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         accent: Int,
         font: Float,
         cascade: Float,
-        flowOffset: Float
+        flowOffset: Float,
+        lineScale: Float
     ): Boolean {
-        val source = line.words.joinToString(separator = "") { it.text }
-        if (source.isBlank()) return false
-        val maxWidth = width - 44f * height / 700f
-        val rows = if (source == line.text) {
-            visualLine.rows
-        } else if (Prefs.balancedWrap(context)) {
-            balancedRows(source, maxWidth)
-        } else {
-            greedyRows(source, maxWidth)
+        val metrics = timedLineMetrics.getOrPut(visualLine.index) {
+            buildTimedLineMetrics(visualLine, line, font)
         }
+        if (metrics.source.isBlank() || metrics.segments.isEmpty()) return false
+
+        val rows = visualLine.rows
         if (rows.isEmpty()) return false
-
         val rowHeight = font * 1.08f
-        val slices = ArrayList<RowSlice>(rows.size)
-        var searchFrom = 0
-        for ((rowIndex, row) in rows.withIndex()) {
-            var rowStart = source.indexOf(row, searchFrom)
-            if (rowStart < 0) rowStart = searchFrom
-            val rowEnd = (rowStart + row.length).coerceAtMost(source.length)
-            val baseline = visualLine.top + flowOffset + scroll.position + cascade + font + rowIndex * rowHeight
-            slices += RowSlice(
-                text = source.substring(rowStart, rowEnd),
-                start = rowStart,
-                end = rowEnd,
-                x = rowX(source.substring(rowStart, rowEnd), line, textPaint),
-                baseline = baseline
-            )
-            searchFrom = rowEnd
+        val rowStarts = FloatArray(rows.size)
+        val rowBaselines = FloatArray(rows.size)
+        for (rowIndex in rows.indices) {
+            rowStarts[rowIndex] = rowX(rows[rowIndex], line, textPaint)
+            rowBaselines[rowIndex] =
+                visualLine.top + flowOffset + scroll.position + cascade + font + rowIndex * rowHeight
         }
 
-        var wordStart = 0
-        for ((wordIndex, word) in line.words.withIndex()) {
-            val wordEnd = (wordStart + word.text.length).coerceAtMost(source.length)
-            if (wordEnd <= wordStart) continue
+        val bright = AppleWordMotion.dynamicBright(lineScale)
+        val dark = AppleWordMotion.dynamicDark(lineScale)
+        val maskX = AppleWordMask.maskX(
+            metrics.mask,
+            motion.currentWordIndex,
+            motion.intraWordProgress
+        )
+        val useGradient = maskX >= 0f && maskX.isFinite()
+        val half = if (useGradient) metrics.mask.transitionHalfWidth else 0f
+        val transitionStart = maskX - half
+        val transitionSpan = half * 2f
 
-            val alpha = (255f * edge * motion.alphaAt(wordIndex)).toInt().coerceIn(0, 255)
-            val lift = motion.liftAt(wordIndex) * height / 700f
+        for (segment in metrics.segments) {
+            if (segment.rowIndex !in rowStarts.indices) continue
+            val wordIndex = segment.wordIndex
+            val x = rowStarts[segment.rowIndex] + segment.prefixWidth
+            val y = rowBaselines[segment.rowIndex] +
+                motion.liftAt(wordIndex) * height / 700f
+
+            val leftAlpha: Float
+            val rightAlpha: Float
+            if (useGradient) {
+                leftAlpha = AppleWordMask.alphaAtX(
+                    segment.logicalStartX,
+                    transitionStart,
+                    transitionSpan,
+                    bright,
+                    dark
+                )
+                rightAlpha = AppleWordMask.alphaAtX(
+                    segment.logicalEndX,
+                    transitionStart,
+                    transitionSpan,
+                    bright,
+                    dark
+                )
+            } else {
+                val uniform = motion.alphaAt(wordIndex)
+                leftAlpha = uniform
+                rightAlpha = uniform
+            }
+
+            val finalLeft = (leftAlpha * edge).coerceIn(0f, 1f)
+            val finalRight = (rightAlpha * edge).coerceIn(0f, 1f)
             val emphasize = Prefs.glow(context) &&
                 wordIndex == motion.currentWordIndex &&
-                shouldEmphasize(line, word)
+                metrics.emphasizeFlags.getOrElse(wordIndex) { false }
             val glowProgress = if (emphasize) {
                 kotlin.math.sin(Math.PI * motion.intraWordProgress.toDouble())
                     .toFloat().coerceAtLeast(0f)
             } else 0f
 
-            for (row in slices) {
-                val a = max(wordStart, row.start)
-                val b = min(wordEnd, row.end)
+            textPaint.textSize = font
+            textPaint.maskFilter = null
+            if (glowProgress > 0.001f) {
+                textPaint.setShadowLayer(
+                    font * 0.24f * glowProgress,
+                    0f,
+                    0f,
+                    withAlpha(accent, (190f * glowProgress).toInt())
+                )
+            } else {
+                textPaint.clearShadowLayer()
+            }
+
+            if (kotlin.math.abs(finalLeft - finalRight) < 0.01f || segment.width <= 0.5f) {
+                textPaint.shader = null
+                textPaint.color = accent
+                textPaint.alpha = (255f * ((finalLeft + finalRight) * 0.5f))
+                    .toInt().coerceIn(0, 255)
+            } else {
+                // md3Music WordRenderer: the moving boundary is a line-level mask,
+                // then each glyph segment samples the bright->dark alpha at its
+                // left/right edges. This is the subtle sweep missing from the old
+                // "whole word lights up" implementation.
+                textPaint.alpha = 255
+                textPaint.color = Color.WHITE
+                textPaint.shader = LinearGradient(
+                    x,
+                    y - font,
+                    x + segment.width.coerceAtLeast(1f),
+                    y - font,
+                    withAlpha(accent, (255f * finalLeft).toInt()),
+                    withAlpha(accent, (255f * finalRight).toInt()),
+                    Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawText(segment.text, x, y, textPaint)
+            textPaint.shader = null
+        }
+
+        textPaint.clearShadowLayer()
+        textPaint.shader = null
+        return true
+    }
+
+    private fun buildTimedLineMetrics(
+        visualLine: VisualLine,
+        line: LyricLine,
+        font: Float
+    ): TimedLineMetrics {
+        configureTextPaint(font)
+        val source = line.words.joinToString(separator = "") { it.text }
+        if (source.isBlank() || line.words.isEmpty()) {
+            return TimedLineMetrics(
+                source = source,
+                segments = emptyList(),
+                mask = AppleWordMask.geometry(FloatArray(0)),
+                emphasizeFlags = BooleanArray(0)
+            )
+        }
+
+        val widths = FloatArray(line.words.size) { i ->
+            textPaint.measureText(line.words[i].text).coerceAtLeast(0f)
+        }
+        val mask = AppleWordMask.geometry(widths)
+        val flags = BooleanArray(line.words.size) { i ->
+            shouldEmphasize(line, line.words[i])
+        }
+
+        data class RowRange(val start: Int, val end: Int, val text: String)
+        val rowRanges = ArrayList<RowRange>(visualLine.rows.size)
+        var searchFrom = 0
+        for (row in visualLine.rows) {
+            var rowStart = source.indexOf(row, searchFrom)
+            if (rowStart < 0) rowStart = searchFrom
+            val rowEnd = (rowStart + row.length).coerceAtMost(source.length)
+            rowRanges += RowRange(rowStart, rowEnd, source.substring(rowStart, rowEnd))
+            searchFrom = rowEnd
+        }
+
+        val segments = ArrayList<TimedSegment>(line.words.size + 2)
+        var wordCharStart = 0
+        for ((wordIndex, word) in line.words.withIndex()) {
+            val wordCharEnd = (wordCharStart + word.text.length).coerceAtMost(source.length)
+            if (wordCharEnd <= wordCharStart) {
+                wordCharStart = wordCharEnd
+                continue
+            }
+            for ((rowIndex, row) in rowRanges.withIndex()) {
+                val a = max(wordCharStart, row.start)
+                val b = min(wordCharEnd, row.end)
                 if (b <= a) continue
                 val prefix = source.substring(row.start, a)
-                val segment = source.substring(a, b)
-                val x = row.x + textPaint.measureText(prefix)
-                textPaint.textSize = font
-                textPaint.typeface = Typeface.create(Typeface.DEFAULT, Prefs.fontWeight(context), false)
-                textPaint.color = accent
-                textPaint.alpha = alpha
-                if (glowProgress > 0.001f) {
-                    textPaint.setShadowLayer(
-                        font * 0.24f * glowProgress,
-                        0f,
-                        0f,
-                        withAlpha(accent, (220f * glowProgress).toInt())
-                    )
-                } else {
-                    textPaint.clearShadowLayer()
-                }
-                canvas.drawText(segment, x, row.baseline + lift, textPaint)
+                val segmentText = source.substring(a, b)
+                val localWordStart = (a - wordCharStart).coerceAtLeast(0)
+                val logicalPrefix = if (localWordStart > 0) {
+                    textPaint.measureText(word.text.substring(0, localWordStart))
+                } else 0f
+                val segmentWidth = textPaint.measureText(segmentText)
+                val logicalStart = mask.wordStarts[wordIndex] + logicalPrefix
+                segments += TimedSegment(
+                    wordIndex = wordIndex,
+                    rowIndex = rowIndex,
+                    text = segmentText,
+                    prefixWidth = textPaint.measureText(prefix),
+                    width = segmentWidth,
+                    logicalStartX = logicalStart,
+                    logicalEndX = logicalStart + segmentWidth
+                )
             }
-            wordStart = wordEnd
+            wordCharStart = wordCharEnd
         }
-        textPaint.clearShadowLayer()
-        return true
+
+        return TimedLineMetrics(
+            source = source,
+            segments = segments,
+            mask = mask,
+            emphasizeFlags = flags
+        )
     }
 
     private fun resolveGlowThreshold(doc: LyricDocument): Int {
