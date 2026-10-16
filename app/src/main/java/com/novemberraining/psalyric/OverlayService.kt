@@ -69,6 +69,7 @@ class OverlayService : Service() {
             }
         }
         ensureWindows()
+        applyMainGeometry()
         syncFlags()
         return START_STICKY
     }
@@ -122,6 +123,21 @@ class OverlayService : Service() {
             strip = view
             stripParams = p
         }
+    }
+
+    private fun applyMainGeometry() {
+        val p = mainParams ?: return
+        val displaySize = Point().also { wm.defaultDisplay.getSize(it) }
+        val g = PsaPreset.scale(
+            Prefs.x(this), Prefs.y(this), Prefs.width(this), Prefs.height(this),
+            displaySize.x, displaySize.y
+        )
+        if (p.x == g.x && p.y == g.y && p.width == g.width && p.height == g.height) return
+        p.x = g.x
+        p.y = g.y
+        p.width = g.width
+        p.height = g.height
+        try { main?.let { wm.updateViewLayout(it, p) } } catch (_: Throwable) {}
     }
 
     private fun syncVisibility() {

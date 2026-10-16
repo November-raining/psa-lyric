@@ -7,6 +7,8 @@ object LyricParsers {
     private val lrcTime = Pattern.compile("""\[(\d{1,3}):(\d{2})(?:[\.:](\d{1,3}))?]""")
     private val yrcLine = Pattern.compile("""^\[(\d+),(\d+)](.*)$""")
     private val yrcWord = Pattern.compile("""\((\d+),(\d+),\d+\)""")
+    private val krcLine = Pattern.compile("""^\[(\d+),(\d+)](.*)$""")
+    private val krcWord = Pattern.compile("""<(\d+),(\d+),\d+>""")
     private val duetPrefix = Pattern.compile("""^\s*(男|女|合)\s*[:：]\s*""")
 
     fun parse(
@@ -33,6 +35,44 @@ object LyricParsers {
 
     fun parseLrc(text: String): List<LyricLine> =
         parseLrcMap(text).map { (time, value) -> LyricLine(time, 0, value) }
+
+    fun parseKrc(text: String): List<LyricLine> {
+        val out = ArrayList<LyricLine>()
+        for (raw in text.lineSequence()) {
+            val line = krcLine.matcher(raw.trim())
+            if (!line.matches()) continue
+            val start = line.group(1)?.toLongOrNull() ?: continue
+            val duration = line.group(2)?.toLongOrNull() ?: 0L
+            val body = line.group(3).orEmpty()
+            val tags = ArrayList<Triple<Int, Long, Long>>()
+            val matcher = krcWord.matcher(body)
+            while (matcher.find()) {
+                val offset = matcher.group(1)?.toLongOrNull() ?: 0L
+                val wordDuration = matcher.group(2)?.toLongOrNull() ?: 0L
+                tags += Triple(matcher.end(), offset, wordDuration)
+            }
+            val words = ArrayList<WordTiming>()
+            val plain = StringBuilder()
+            for (i in tags.indices) {
+                val item = tags[i]
+                val end = if (i + 1 < tags.size) findKrcTagStart(body, tags[i + 1].first) else body.length
+                val wordText = body.substring(item.first, end).replace(krcWord.toRegex(), "")
+                if (wordText.isNotEmpty()) {
+                    plain.append(wordText)
+                    words += WordTiming(start + item.second, item.third, wordText)
+                }
+            }
+            val display = if (plain.isNotEmpty()) plain.toString() else krcWord.matcher(body).replaceAll("")
+            if (display.isNotBlank()) out += LyricLine(start, duration, display.trim(), words = words)
+        }
+        return out.sortedBy { it.startMs }
+    }
+
+    private fun findKrcTagStart(body: String, endOfNextTag: Int): Int {
+        var i = endOfNextTag - 1
+        while (i >= 0 && body[i] != '<') i--
+        return if (i >= 0) i else endOfNextTag
+    }
 
     fun parseYrc(text: String): List<LyricLine> {
         val out = ArrayList<LyricLine>()

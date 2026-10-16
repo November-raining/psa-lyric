@@ -19,6 +19,14 @@ class LyricParsersTest {
         assertEquals(1500L, doc.lines[0].words[1].startMs)
     }
 
+    @Test fun krcConvertsRelativeWordOffsetsToAbsoluteTime() {
+        val lines = LyricParsers.parseKrc("[1000,2000]<0,500,0>你<500,600,0>好")
+        assertEquals("你好", lines[0].text)
+        assertEquals(1000L, lines[0].words[0].startMs)
+        assertEquals(1500L, lines[0].words[1].startMs)
+        assertEquals(600L, lines[0].words[1].durationMs)
+    }
+
     @Test fun duetPrefixChoosesAlignment() {
         val doc = LyricParsers.parse("[00:01.000]女：你好")
         assertEquals(DuetAlignment.RIGHT, doc.lines[0].alignment)

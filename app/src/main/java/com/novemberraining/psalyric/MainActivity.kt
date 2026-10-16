@@ -71,8 +71,23 @@ class MainActivity : Activity() {
             Prefs.setTouchThrough(this, it); refreshService()
         }
         button("重置 CarLife 右侧全高卡片位置（1373,10 / 535×700）") {
-            Prefs.resetGeometry(this); refreshService(recreate = true)
+            Prefs.resetGeometry(this); refreshService()
+            rebuild()
         }
+        seek("横坐标 X", 0, 1920, Prefs.x(this), "") {
+            Prefs.setGeometry(this, it, Prefs.y(this), Prefs.width(this), Prefs.height(this))
+        }
+        seek("纵坐标 Y", 0, 720, Prefs.y(this), "") {
+            Prefs.setGeometry(this, Prefs.x(this), it, Prefs.width(this), Prefs.height(this))
+        }
+        seek("卡片宽度", 260, 900, Prefs.width(this), " px") {
+            Prefs.setGeometry(this, Prefs.x(this), Prefs.y(this), it, Prefs.height(this))
+        }
+        seek("卡片高度", 300, 720, Prefs.height(this), " px") {
+            Prefs.setGeometry(this, Prefs.x(this), Prefs.y(this), Prefs.width(this), it)
+        }
+        button("应用位置 / 尺寸") { refreshService() }
+        note("以上为 1920×720 设计坐标；其它分辨率运行时按比例映射。")
 
         section("Apple 歌词动效")
         seek("字号", 12, 50, Prefs.fontSize(this), "") { Prefs.setFontSize(this, it) }

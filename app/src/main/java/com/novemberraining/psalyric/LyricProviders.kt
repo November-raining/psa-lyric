@@ -3,6 +3,7 @@ package com.novemberraining.psalyric
 import android.content.Context
 import android.text.Html
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -10,6 +11,7 @@ import java.net.URLEncoder
 import java.nio.charset.Charset
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.zip.InflaterInputStream
 import java.util.Locale
 import javax.crypto.Cipher
 import javax.crypto.spec.SecretKeySpec
@@ -28,15 +30,39 @@ object LocalLyricProvider : LyricProvider {
         if (dir.isBlank()) return null
         val root = File(dir)
         if (!root.isDirectory) return null
-        val candidates = listOf(
-            "${safe(query.title)} - ${safe(query.artist)}.lrc",
-            "${safe(query.title)}.lrc"
+        val baseNames = listOf(
+            "${safe(query.title)} - ${safe(query.artist)}",
+            safe(query.title)
         )
-        val file = candidates.asSequence().map { File(root, it) }.firstOrNull { it.isFile } ?: return null
+        val file = baseNames.asSequence()
+            .flatMap { base -> sequenceOf(File(root, "$base.krc"), File(root, "$base.lrc")) }
+            .firstOrNull { it.isFile } ?: return null
         val bytes = file.readBytes()
-        val text = decodeText(bytes)
-        val doc = LyricParsers.parse(text)
-        return if (doc.lines.isEmpty()) null else doc.copy(source = name)
+        val doc = if (file.extension.equals("krc", true)) {
+            val text = decodeKrc(bytes)
+            LyricDocument(LyricParsers.parseKrc(text), source = name)
+        } else {
+            LyricParsers.parse(decodeText(bytes)).copy(source = name)
+        }
+        return if (doc.lines.isEmpty()) null else doc
+    }
+
+    private val krcKey = byteArrayOf(
+        0x40, 0x47, 0x61, 0x77, 0x5e, 0x32, 0x74, 0x47,
+        0x51, 0x36, 0x31, 0x2d, 0xce.toByte(), 0xd2.toByte(), 0x6e, 0x69
+    )
+
+    private fun decodeKrc(bytes: ByteArray): String {
+        if (bytes.size < 4 || bytes[0] != 'k'.code.toByte() || bytes[1] != 'r'.code.toByte()
+            || bytes[2] != 'c'.code.toByte() || bytes[3] != '1'.code.toByte()) {
+            return decodeText(bytes)
+        }
+        val encrypted = bytes.copyOfRange(4, bytes.size)
+        for (i in encrypted.indices) {
+            encrypted[i] = (encrypted[i].toInt() xor krcKey[i % krcKey.size].toInt()).toByte()
+        }
+        return InflaterInputStream(ByteArrayInputStream(encrypted))
+            .bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
 
     private fun safe(v: String) = v.replace(Regex("""[\\/:*?"<>|]"""), "_").trim()
