@@ -21,8 +21,7 @@ class ApplePlaybackControlsTest {
                 width,
                 height,
                 240_000L
-            ),
-            1_000L
+            )
         )
         assertEquals(
             0L,
