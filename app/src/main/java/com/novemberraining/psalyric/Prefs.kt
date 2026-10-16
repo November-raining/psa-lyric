@@ -48,8 +48,17 @@ object Prefs {
     fun lyricOffsetMs(c: Context) = p(c).getLong("lyric_offset_ms", 0L)
     fun setLyricOffsetMs(c: Context, v: Long) = p(c).edit().putLong("lyric_offset_ms", v.coerceIn(-5000L, 5000L)).apply()
 
-    fun localLyricDir(c: Context) = p(c).getString("local_lyric_dir", "") ?: ""
-    fun setLocalLyricDir(c: Context, v: String) = p(c).edit().putString("local_lyric_dir", v.trim()).apply()
+    fun secondaryLyricEnabled(c: Context) = p(c).getBoolean("secondary_lyric_enabled", true)
+    fun setSecondaryLyricEnabled(c: Context, v: Boolean) =
+        p(c).edit().putBoolean("secondary_lyric_enabled", v).apply()
+
+    fun secondaryLyricMode(c: Context) = LyricSecondaryRules.normalizeMode(
+        p(c).getString("secondary_lyric_mode", LyricSecondaryRules.MODE_TRANSLATION)
+    )
+    fun setSecondaryLyricMode(c: Context, v: String) =
+        p(c).edit()
+            .putString("secondary_lyric_mode", LyricSecondaryRules.normalizeMode(v))
+            .apply()
 
     fun x(c: Context) = p(c).getInt("x", 1373)
     fun y(c: Context) = p(c).getInt("y", 10)

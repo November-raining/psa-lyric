@@ -48,6 +48,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
     private var cachedDoc: LyricDocument? = null
     private var cachedWidth = -1
     private var cachedFont = -1f
+    private var cachedSecondaryEnabled = true
+    private var cachedSecondaryMode = LyricSecondaryRules.MODE_TRANSLATION
     private var currentIndex = -1
     private var lastFrameNs = 0L
     private var firstLayout = true
@@ -169,10 +171,20 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
 
     private fun ensureLayout(doc: LyricDocument) {
         val font = designFontPx()
-        if (cachedDoc === doc && cachedWidth == width && abs(cachedFont - font) < 0.1f) return
+        val secondaryEnabled = Prefs.secondaryLyricEnabled(context)
+        val secondaryMode = Prefs.secondaryLyricMode(context)
+        if (
+            cachedDoc === doc &&
+            cachedWidth == width &&
+            abs(cachedFont - font) < 0.1f &&
+            cachedSecondaryEnabled == secondaryEnabled &&
+            cachedSecondaryMode == secondaryMode
+        ) return
         cachedDoc = doc
         cachedWidth = width
         cachedFont = font
+        cachedSecondaryEnabled = secondaryEnabled
+        cachedSecondaryMode = secondaryMode
         visual = buildVisual(doc, font)
         firstLayout = true
         currentIndex = -1
@@ -193,7 +205,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         for ((i, line) in doc.lines.withIndex()) {
             val rows = if (Prefs.balancedWrap(context)) balancedRows(line.text, maxWidth) else greedyRows(line.text, maxWidth)
             val textHeight = rows.size * font * 1.08f
-            val sub = if (line.translation.isNotBlank() || line.romaji.isNotBlank()) font * 0.72f else 0f
+            val sub = if (secondaryText(line).isNotBlank()) font * 0.72f else 0f
             val gap = font * 0.62f * Prefs.lineSpacing(context)
             val h = textHeight + sub + gap
             out += VisualLine(i, rows, top, h)
@@ -201,6 +213,14 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         }
         return out
     }
+
+    private fun secondaryText(line: LyricLine): String =
+        LyricSecondaryRules.select(
+            enabled = Prefs.secondaryLyricEnabled(context),
+            mode = Prefs.secondaryLyricMode(context),
+            translation = line.translation,
+            romaji = line.romaji
+        )
 
     private fun configureTextPaint(font: Float) {
         textPaint.textSize = font
@@ -405,7 +425,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             textPaint.clearShadowLayer()
             textPaint.maskFilter = null
 
-            val sub = if (active) line.translation.ifBlank { line.romaji } else ""
+            val sub = if (active) secondaryText(line) else ""
             if (sub.isNotBlank()) {
                 textPaint.textSize = font * 0.58f
                 textPaint.alpha = (255 * edge * 0.76f).toInt().coerceIn(0, 255)
