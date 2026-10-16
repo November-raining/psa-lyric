@@ -82,29 +82,53 @@ class MainActivity : Activity() {
         toggle("悬浮窗触摸穿透", Prefs.touchThrough(this)) {
             Prefs.setTouchThrough(this, it); refreshService()
         }
-        button("重置 CarLife 右侧全高卡片位置（1373,10 / 535×700）") {
-            Prefs.resetGeometry(this); refreshService()
-            rebuild()
-        }
-        seek("横坐标 X", 0, 1920, Prefs.x(this), "") {
+        seekWithReset(
+            "横坐标 X", 0, 1920, Prefs.x(this), "",
+            resetValue = Prefs.DEFAULT_X,
+            resetLabel = "重置"
+        ) {
             Prefs.setGeometry(this, it, Prefs.y(this), Prefs.width(this), Prefs.height(this))
         }
-        seek("纵坐标 Y", 0, 720, Prefs.y(this), "") {
+        seekWithReset(
+            "纵坐标 Y", 0, 720, Prefs.y(this), "",
+            resetValue = Prefs.DEFAULT_Y,
+            resetLabel = "重置"
+        ) {
             Prefs.setGeometry(this, Prefs.x(this), it, Prefs.width(this), Prefs.height(this))
         }
-        seek("卡片宽度", 260, 900, Prefs.width(this), " px") {
+        seekWithReset(
+            "卡片宽度", 260, 900, Prefs.width(this), " px",
+            resetValue = Prefs.DEFAULT_WIDTH,
+            resetLabel = "重置"
+        ) {
             Prefs.setGeometry(this, Prefs.x(this), Prefs.y(this), it, Prefs.height(this))
         }
-        seek("卡片高度", 300, 720, Prefs.height(this), " px") {
+        seekWithReset(
+            "卡片高度", 300, 720, Prefs.height(this), " px",
+            resetValue = Prefs.DEFAULT_HEIGHT,
+            resetLabel = "重置"
+        ) {
             Prefs.setGeometry(this, Prefs.x(this), Prefs.y(this), Prefs.width(this), it)
         }
         button("应用位置 / 尺寸") { refreshService() }
         note("以上为 1920×720 设计坐标；其它分辨率运行时按比例映射。")
 
         section("Apple 歌词动效")
-        seek("字号", 12, 50, Prefs.fontSize(this), "") { Prefs.setFontSize(this, it) }
-        seek("字重", 300, 900, Prefs.fontWeight(this), "") { Prefs.setFontWeight(this, (it / 100) * 100) }
-        seekFloat("行间距", 50, 200, (Prefs.lineSpacing(this) * 100).toInt(), "%") {
+        seekWithReset(
+            "字号", 12, 50, Prefs.fontSize(this), "",
+            resetValue = Prefs.DEFAULT_FONT_SIZE,
+            resetLabel = "重置"
+        ) { Prefs.setFontSize(this, it) }
+        seekWithReset(
+            "字重", 300, 900, Prefs.fontWeight(this), "",
+            resetValue = Prefs.DEFAULT_FONT_WEIGHT,
+            resetLabel = "重置"
+        ) { Prefs.setFontWeight(this, (it / 100) * 100) }
+        seekWithReset(
+            "行间距", 50, 200, (Prefs.lineSpacing(this) * 100).toInt(), "%",
+            resetValue = (Prefs.DEFAULT_LINE_SPACING * 100).toInt(),
+            resetLabel = "重置"
+        ) {
             Prefs.setLineSpacing(this, it / 100f)
         }
         toggle("对唱优化", Prefs.duet(this)) { Prefs.setDuet(this, it) }
@@ -318,6 +342,7 @@ class MainActivity : Activity() {
         value: Int,
         suffix: String,
         resetValue: Int,
+        resetLabel: String = "归零",
         change: (Int) -> Unit
     ) {
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -332,7 +357,7 @@ class MainActivity : Activity() {
             textSize = 13f
         }
         val reset = TextView(this).apply {
-            text = "归零"
+            text = resetLabel
             setTextColor(0xFF78C7FF.toInt())
             textSize = 13f
             gravity = Gravity.CENTER

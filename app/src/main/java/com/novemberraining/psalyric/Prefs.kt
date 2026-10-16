@@ -4,6 +4,17 @@ import android.content.Context
 
 object Prefs {
     private const val FILE = "psa_lyric"
+
+    // User-tunable baseline values. The settings UI resets each slider to these
+    // constants, so simulator/car tuning can change the product baseline later
+    // without duplicating magic numbers in multiple screens.
+    const val DEFAULT_FONT_SIZE = 29
+    const val DEFAULT_FONT_WEIGHT = 600
+    const val DEFAULT_LINE_SPACING = 0.9f
+    const val DEFAULT_X = 1373
+    const val DEFAULT_Y = 10
+    const val DEFAULT_WIDTH = 535
+    const val DEFAULT_HEIGHT = 700
     private fun p(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
     fun enabled(c: Context) = p(c).getBoolean("enabled", false)
@@ -21,13 +32,13 @@ object Prefs {
     fun screenCaptureEnabled(c: Context) = p(c).getBoolean("screen_capture", false)
     fun setScreenCaptureEnabled(c: Context, v: Boolean) = p(c).edit().putBoolean("screen_capture", v).apply()
 
-    fun fontSize(c: Context) = p(c).getInt("font_size", 29).coerceIn(12, 50)
+    fun fontSize(c: Context) = p(c).getInt("font_size", DEFAULT_FONT_SIZE).coerceIn(12, 50)
     fun setFontSize(c: Context, v: Int) = p(c).edit().putInt("font_size", v.coerceIn(12, 50)).apply()
 
-    fun fontWeight(c: Context) = p(c).getInt("font_weight", 600).coerceIn(300, 900)
+    fun fontWeight(c: Context) = p(c).getInt("font_weight", DEFAULT_FONT_WEIGHT).coerceIn(300, 900)
     fun setFontWeight(c: Context, v: Int) = p(c).edit().putInt("font_weight", v.coerceIn(300, 900)).apply()
 
-    fun lineSpacing(c: Context) = p(c).getFloat("line_spacing", 0.9f).coerceIn(0.5f, 2f)
+    fun lineSpacing(c: Context) = p(c).getFloat("line_spacing", DEFAULT_LINE_SPACING).coerceIn(0.5f, 2f)
     fun setLineSpacing(c: Context, v: Float) = p(c).edit().putFloat("line_spacing", v.coerceIn(0.5f, 2f)).apply()
 
     fun gaussianBlur(c: Context) = p(c).getBoolean("gaussian_blur", true)
@@ -60,10 +71,10 @@ object Prefs {
             .putString("secondary_lyric_mode", LyricSecondaryRules.normalizeMode(v))
             .apply()
 
-    fun x(c: Context) = p(c).getInt("x", 1373)
-    fun y(c: Context) = p(c).getInt("y", 10)
-    fun width(c: Context) = p(c).getInt("width", 535).coerceAtLeast(260)
-    fun height(c: Context) = p(c).getInt("height", 700).coerceAtLeast(300)
+    fun x(c: Context) = p(c).getInt("x", DEFAULT_X)
+    fun y(c: Context) = p(c).getInt("y", DEFAULT_Y)
+    fun width(c: Context) = p(c).getInt("width", DEFAULT_WIDTH).coerceAtLeast(260)
+    fun height(c: Context) = p(c).getInt("height", DEFAULT_HEIGHT).coerceAtLeast(300)
 
     fun setGeometry(c: Context, x: Int, y: Int, width: Int, height: Int) {
         p(c).edit()
@@ -72,5 +83,6 @@ object Prefs {
             .putInt("height", height.coerceAtLeast(300)).apply()
     }
 
-    fun resetGeometry(c: Context) = setGeometry(c, 1373, 10, 535, 700)
+    fun resetGeometry(c: Context) =
+        setGeometry(c, DEFAULT_X, DEFAULT_Y, DEFAULT_WIDTH, DEFAULT_HEIGHT)
 }
