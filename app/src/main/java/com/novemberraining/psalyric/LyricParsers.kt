@@ -12,7 +12,6 @@ object LyricParsers {
     private val yrcWord = Pattern.compile("""\((\d+),(\d+),\d+\)""")
     private val krcLine = Pattern.compile("""^\[(\d+),(\d+)](.*)$""")
     private val krcWord = Pattern.compile("""<(\d+),(\d+),\d+>""")
-    private val duetPrefix = Pattern.compile("""^\s*(男|女|合)\s*[:：]\s*""")
 
     fun parse(
         lrc: String,
@@ -32,32 +31,31 @@ object LyricParsers {
         if (base.isEmpty()) return LyricDocument.EMPTY
 
         val merged = base.map { raw ->
-            val duet = cleanDuet(raw.text)
             val translation = if (yrc.isNotBlank()) {
                 enhancedTranslation(
                     originals = originals,
                     translations = translations,
                     lineStart = raw.startMs,
-                    lineText = duet.first
+                    lineText = raw.text
                 )
             } else {
                 closestText(translations, raw.startMs, 500L)
             }
             val romanized = closestText(romaji, raw.startMs, 500L)
             raw.copy(
-                text = duet.first,
-                alignment = duet.second,
-                translation = translation.let(::cleanDuet).first,
-                romaji = romanized.let(::cleanDuet).first
+                translation = translation,
+                romaji = romanized
             )
         }
-        return LyricDocument(merged)
+        return LyricDocument(DuetLayout.process(merged))
     }
 
     fun parseLrc(text: String): List<LyricLine> {
         val offsetMs = offsetOf(text)
-        return parseLrcMap(text, offsetMs)
-            .map { (time, value) -> LyricLine(time, 0, value) }
+        return DuetLayout.process(
+            parseLrcMap(text, offsetMs)
+                .map { (time, value) -> LyricLine(time, 0, value) }
+        )
     }
 
     fun parseKrc(text: String): List<LyricLine> {
@@ -99,7 +97,7 @@ object LyricParsers {
                 out += LyricLine(start, duration, display.trim(), words = words)
             }
         }
-        return out.sortedBy { it.startMs }
+        return DuetLayout.process(out.sortedBy { it.startMs })
     }
 
     private fun findKrcTagStart(body: String, endOfNextTag: Int): Int {
@@ -108,7 +106,7 @@ object LyricParsers {
         return if (i >= 0) i else endOfNextTag
     }
 
-    fun parseYrc(text: String): List<LyricLine> = parseYrc(text, 0L)
+    fun parseYrc(text: String): List<LyricLine> = DuetLayout.process(parseYrc(text, 0L))
 
     private fun parseYrc(text: String, offsetMs: Long): List<LyricLine> {
         val out = ArrayList<LyricLine>()
@@ -246,15 +244,4 @@ object LyricParsers {
 
     private fun normalizeLyricText(value: String): String =
         value.lowercase(Locale.ROOT).replace(Regex("""[\p{P}\s]+"""), "")
-
-    private fun cleanDuet(text: String): Pair<String, DuetAlignment> {
-        val matcher = duetPrefix.matcher(text)
-        if (!matcher.find()) return text.trim() to DuetAlignment.LEFT
-        val alignment = when (matcher.group(1)) {
-            "男" -> DuetAlignment.LEFT
-            "女" -> DuetAlignment.RIGHT
-            else -> DuetAlignment.CENTER
-        }
-        return text.substring(matcher.end()).trim() to alignment
-    }
 }

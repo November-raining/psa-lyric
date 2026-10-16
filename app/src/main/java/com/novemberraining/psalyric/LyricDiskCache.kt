@@ -90,7 +90,7 @@ object LyricDiskCache {
             file.setLastModified(System.currentTimeMillis())
             val origin = root.optString("source").ifBlank { "未知来源" }
             LyricDocument(
-                lines = lines.sortedBy { it.startMs },
+                lines = DuetLayout.process(lines.sortedBy { it.startMs }),
                 source = "本地缓存 · $origin"
             )
         } catch (_: Throwable) {
