@@ -16,7 +16,7 @@ class Spring1D(
         velocity = 0f
     }
 
-    fun setTarget(value: Float) {
+    fun retarget(value: Float) {
         target = value
     }
 
