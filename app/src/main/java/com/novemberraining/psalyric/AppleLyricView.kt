@@ -43,6 +43,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
     private val buttonScales = Array(3) {
         Spring1D(position = 1f, target = 1f, mass = 1f, stiffness = 180f, damping = 18f)
     }
+    private val interludeMotion = AppleInterludeMotion()
+    private var interludePlaceholderHeight = 0f
 
     private var visual = emptyList<VisualLine>()
     private var cachedDoc: LyricDocument? = null
@@ -121,6 +123,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         val effective = snapshot.estimatedPosition() + Prefs.lyricOffsetMs(context)
         val idx = doc.currentIndex(effective)
         ensureLayout(doc)
+        interludeMotion.update(doc.lines, effective, frameDt, snapshot.playing)
         updateCurrent(idx, doc)
         drawLyrics(canvas, doc, effective)
         drawControls(canvas, snapshot)
@@ -193,6 +196,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         cascadeSprings.clear()
         cascadeStartTimes.clear()
         cascadePosY = scroll.position
+        interludePlaceholderHeight = font * 1.08f
+        interludeMotion.reset()
         glowThresholdMs = resolveGlowThreshold(doc)
     }
 
@@ -260,12 +265,20 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         if (!browsing) {
             val line = visual[index]
             val anchor = lyricTop + lyricHeight * 0.35f
-            val target = anchor - (line.top + line.height / 2f)
+            val interludeOffset = interludeMotion.offsetBefore(index, interludePlaceholderHeight)
+            val target = anchor - (line.top + interludeOffset + line.height / 2f)
             val nextStart = doc.lines.getOrNull(index + 1)?.startMs ?: doc.lines[index].endMs + 800
             val interval = (nextStart - doc.lines[index].endMs).coerceAtLeast(100)
-            val stiffness = AppleMotion.scrollStiffness(interval)
-            scroll.stiffness = stiffness
-            scroll.damping = AppleMotion.scrollDamping(stiffness)
+            if (interludeMotion.isActive || interludeMotion.isPlaceholderVisible) {
+                // md3Music/AMLL interlude handoff: keep the lyric stack floating softly
+                // while the placeholder expands/collapses around the three-dot row.
+                scroll.stiffness = 40f
+                scroll.damping = 10f
+            } else {
+                val stiffness = AppleMotion.scrollStiffness(interval)
+                scroll.stiffness = stiffness
+                scroll.damping = AppleMotion.scrollDamping(stiffness)
+            }
             scroll.mass = 1f
             if (firstLayout) {
                 scroll.snap(target)
@@ -365,7 +378,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
 
         for (v in visual) {
             val cascade = cascadeOffset(v.index)
-            val centerY = v.top + v.height / 2f + scroll.position + cascade
+            val flowOffset = interludeMotion.offsetBefore(v.index, interludePlaceholderHeight)
+            val centerY = v.top + flowOffset + v.height / 2f + scroll.position + cascade
             if (centerY < lyricTop - 90f || centerY > lyricBottom + 90f) continue
             val line = doc.lines[v.index]
             val dist = abs(v.index - currentIndex)
@@ -396,7 +410,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             }
 
             val rowHeight = font * 1.08f
-            var y = v.top + scroll.position + cascade + font
+            var y = v.top + flowOffset + scroll.position + cascade + font
             val timedDrawn = if (active && line.words.isNotEmpty()) {
                 val motion = wordMotions.getOrPut(v.index) { AppleWordMotion() }
                 motion.tick(line, positionMs, scale, true, frameDt)
@@ -408,7 +422,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
                     edge = edge,
                     accent = accent,
                     font = font,
-                    cascade = cascade
+                    cascade = cascade,
+                    flowOffset = flowOffset
                 )
             } else false
 
@@ -435,6 +450,53 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             }
             canvas.restore()
         }
+
+        drawInterludeDots(canvas, doc, positionMs, font, accent)
+    }
+
+    private fun drawInterludeDots(
+        canvas: Canvas,
+        doc: LyricDocument,
+        positionMs: Long,
+        font: Float,
+        accent: Int
+    ) {
+        val frame = interludeMotion.dotFrame(positionMs) ?: return
+        val anchorIndex = interludeMotion.activeWindow?.anchorIndex ?: return
+        if (anchorIndex !in visual.indices || anchorIndex !in doc.lines.indices) return
+        if (interludeMotion.expandProgress <= 0f) return
+
+        val anchor = visual[anchorIndex]
+        val cascade = cascadeOffset(anchorIndex)
+        val placeholderHeight = interludePlaceholderHeight * interludeMotion.expandProgress
+        val anchorBottomY = anchor.top + anchor.height + scroll.position + cascade
+        val centerY = anchorBottomY + placeholderHeight / 2f
+        val edge = edgeFade(centerY)
+        if (edge <= 0f || frame.scale <= 0f) return
+
+        // md3Music/AMLL proportions: radius≈0.18em, spacing≈0.9em,
+        // start≈1.5em. Scale all three dots as one breathing group.
+        val radius = font * 0.18f
+        val spacing = font * 0.90f
+        val startX = font * 1.50f
+        val centerX = startX + spacing + radius
+
+        canvas.save()
+        canvas.scale(frame.scale, frame.scale, centerX, centerY)
+        shapePaint.style = Paint.Style.FILL
+        shapePaint.maskFilter = null
+        for (i in 0..2) {
+            val alpha = (255f * frame.dotAlphas[i] * edge).toInt().coerceIn(0, 255)
+            if (alpha <= 0) continue
+            shapePaint.color = withAlpha(accent, alpha)
+            canvas.drawCircle(
+                centerX + (i - 1) * spacing,
+                centerY,
+                radius,
+                shapePaint
+            )
+        }
+        canvas.restore()
     }
 
     private fun drawTimedRows(
@@ -445,7 +507,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         edge: Float,
         accent: Int,
         font: Float,
-        cascade: Float
+        cascade: Float,
+        flowOffset: Float
     ): Boolean {
         val source = line.words.joinToString(separator = "") { it.text }
         if (source.isBlank()) return false
@@ -466,7 +529,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             var rowStart = source.indexOf(row, searchFrom)
             if (rowStart < 0) rowStart = searchFrom
             val rowEnd = (rowStart + row.length).coerceAtMost(source.length)
-            val baseline = visualLine.top + scroll.position + cascade + font + rowIndex * rowHeight
+            val baseline = visualLine.top + flowOffset + scroll.position + cascade + font + rowIndex * rowHeight
             slices += RowSlice(
                 text = source.substring(rowStart, rowEnd),
                 start = rowStart,
@@ -689,7 +752,10 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
 
     private fun seekLineAt(y: Float) {
         val contentY = y - scroll.position
-        val line = visual.minByOrNull { abs((it.top + it.height / 2f) - contentY) } ?: return
+        val line = visual.minByOrNull {
+            val flowOffset = interludeMotion.offsetBefore(it.index, interludePlaceholderHeight)
+            abs((it.top + flowOffset + it.height / 2f) - contentY)
+        } ?: return
         val raw = cachedDoc?.lines?.getOrNull(line.index)?.startMs ?: return
         PlaybackStore.seekTo(raw - Prefs.lyricOffsetMs(context))
         browsing = false
