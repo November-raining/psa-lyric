@@ -449,7 +449,13 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             textPaint.color = if (active) accent else Color.WHITE
             textPaint.alpha = drawAlpha
             if (active && line.words.isEmpty() && Prefs.glow(context)) {
-                textPaint.setShadowLayer(5f * height / 700f, 0f, 0f, accent)
+                textPaint.setShadowLayer(
+                    5f * height / 700f *
+                        AppleVisualTuning.glowScale(Prefs.glowIntensity(context)),
+                    0f,
+                    0f,
+                    accent
+                )
             } else {
                 textPaint.clearShadowLayer()
             }
