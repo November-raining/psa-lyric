@@ -96,7 +96,7 @@ object LyricsEngine {
         val localOutcome = runProvider(context, LocalLyricProvider, query)
         status["本地"] = localOutcome
         if (localOutcome.document?.hasWordTimings == true) {
-            finishMatch(key, localOutcome.document, "matched-word", status, startedAt)
+            finishMatch(context, key, localOutcome.document, "matched-word", status, startedAt)
             return
         }
         if (localOutcome.document?.lines?.isNotEmpty() == true) {
@@ -133,14 +133,14 @@ object LyricsEngine {
                 val elapsed = SystemClock.elapsedRealtime() - startedAt
                 val qq = status["QQ"]
                 if (qq?.document?.hasWordTimings == true) {
-                    finishMatch(key, qq.document, "matched-word", status, startedAt)
+                    finishMatch(context, key, qq.document, "matched-word", status, startedAt)
                     return
                 }
 
                 val backupWord = preferredBackupWord(status)
                 val qqFinished = qq != null
                 if (backupWord != null && (qqFinished || elapsed >= QQ_GRACE_MS)) {
-                    finishMatch(key, backupWord, "matched-word", status, startedAt)
+                    finishMatch(context, key, backupWord, "matched-word", status, startedAt)
                     return
                 }
 
@@ -160,7 +160,7 @@ object LyricsEngine {
 
             val finalWord = preferredWord(status)
             if (finalWord != null) {
-                finishMatch(key, finalWord, "matched-word", status, startedAt)
+                finishMatch(context, key, finalWord, "matched-word", status, startedAt)
                 return
             }
 
@@ -169,7 +169,7 @@ object LyricsEngine {
             }
             val line = lineFallback
             if (line != null) {
-                finishMatch(key, line, "matched-line", status, startedAt)
+                finishMatch(context, key, line, "matched-line", status, startedAt)
                 return
             }
 
@@ -258,14 +258,31 @@ object LyricsEngine {
         listOf("QQ", "酷狗", "网易云").all { status[it] != null }
 
     private fun finishMatch(
+        context: Context,
         key: String,
         document: LyricDocument,
         state: String,
         status: Map<String, ProviderOutcome?>,
         startedAt: Long
     ) {
-        if (trackKey(PlaybackStore.snapshot) != key) return
+        val current = PlaybackStore.snapshot
+        if (trackKey(current) != key) return
         store(key, document)
+
+        // Persist every successful match in the app-private cache. This makes a later
+        // next/previous round trip independent of volatile mediaId/session fields.
+        LyricDiskCache.save(
+            context,
+            TrackQuery(
+                current.packageName,
+                current.mediaId,
+                current.title,
+                current.artist,
+                current.durationMs
+            ),
+            document
+        )
+
         diagnostics = diagnosticFor(
             key = key,
             state = state,

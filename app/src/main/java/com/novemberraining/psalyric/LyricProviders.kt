@@ -45,6 +45,10 @@ object LocalLyricProvider : LyricProvider {
     override val name = "本地"
 
     override fun load(context: Context, query: TrackQuery): LyricDocument? {
+        // Automatic app-private cache is always active and requires no storage permission.
+        // It is checked before the optional user-provided external lyric directory.
+        LyricDiskCache.load(context, query)?.let { return it }
+
         val dir = Prefs.localLyricDir(context)
         if (dir.isBlank()) return null
         val root = File(dir)
