@@ -452,7 +452,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             var y = v.top + flowOffset + scroll.position + cascade + font
             val timedDrawn = if (active && line.words.isNotEmpty()) {
                 val motion = wordMotions.getOrPut(v.index) { AppleWordMotion() }
-                motion.tick(line, positionMs, AppleMotion.ACTIVE_SCALE, true, frameDt)
+                motion.tick(line, positionMs, scale, true, frameDt)
                 drawTimedRows(
                     canvas = canvas,
                     visualLine = v,
@@ -463,7 +463,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
                     font = font,
                     cascade = cascade,
                     flowOffset = flowOffset,
-                    lineScale = AppleMotion.ACTIVE_SCALE
+                    lineScale = scale
                 )
             } else false
 
@@ -626,7 +626,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
                     font * 0.24f * glowProgress,
                     0f,
                     0f,
-                    withAlpha(accent, (190f * glowProgress).toInt())
+                    withAlpha(accent, (220f * glowProgress).toInt())
                 )
             } else {
                 textPaint.clearShadowLayer()
