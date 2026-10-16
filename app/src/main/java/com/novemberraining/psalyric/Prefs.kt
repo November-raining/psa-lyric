@@ -15,6 +15,9 @@ object Prefs {
     const val DEFAULT_Y = 10
     const val DEFAULT_WIDTH = 535
     const val DEFAULT_HEIGHT = 700
+    const val DEFAULT_GLOW_INTENSITY = 220
+    const val DEFAULT_GAUSSIAN_BLUR_STRENGTH = 100
+    const val DEFAULT_GAUSSIAN_BLUR_DISTANCE_BOOST = 100
     private fun p(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
     fun enabled(c: Context) = p(c).getBoolean("enabled", false)
@@ -44,8 +47,33 @@ object Prefs {
     fun gaussianBlur(c: Context) = p(c).getBoolean("gaussian_blur", true)
     fun setGaussianBlur(c: Context, v: Boolean) = p(c).edit().putBoolean("gaussian_blur", v).apply()
 
+    fun gaussianBlurStrength(c: Context) =
+        p(c).getInt(
+            "gaussian_blur_strength",
+            DEFAULT_GAUSSIAN_BLUR_STRENGTH
+        ).coerceIn(50, 300)
+    fun setGaussianBlurStrength(c: Context, v: Int) =
+        p(c).edit()
+            .putInt("gaussian_blur_strength", v.coerceIn(50, 300))
+            .apply()
+
+    fun gaussianBlurDistanceBoost(c: Context) =
+        p(c).getInt(
+            "gaussian_blur_distance_boost",
+            DEFAULT_GAUSSIAN_BLUR_DISTANCE_BOOST
+        ).coerceIn(0, 250)
+    fun setGaussianBlurDistanceBoost(c: Context, v: Int) =
+        p(c).edit()
+            .putInt("gaussian_blur_distance_boost", v.coerceIn(0, 250))
+            .apply()
+
     fun glow(c: Context) = p(c).getBoolean("glow", true)
     fun setGlow(c: Context, v: Boolean) = p(c).edit().putBoolean("glow", v).apply()
+
+    fun glowIntensity(c: Context) =
+        p(c).getInt("glow_intensity", DEFAULT_GLOW_INTENSITY).coerceIn(80, 400)
+    fun setGlowIntensity(c: Context, v: Int) =
+        p(c).edit().putInt("glow_intensity", v.coerceIn(80, 400)).apply()
 
     fun dynamicColor(c: Context) = p(c).getBoolean("dynamic_color", true)
     fun setDynamicColor(c: Context, v: Boolean) = p(c).edit().putBoolean("dynamic_color", v).apply()
