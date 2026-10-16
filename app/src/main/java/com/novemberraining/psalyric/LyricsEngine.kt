@@ -14,6 +14,8 @@ data class LyricDiagnostics(
     val wordTimed: Boolean = false,
     val lineCount: Int = 0,
     val wordCount: Int = 0,
+    val translationLineCount: Int = 0,
+    val romajiLineCount: Int = 0,
     val elapsedMs: Long = 0L
 )
 
@@ -29,6 +31,7 @@ object LyricsEngine {
     private const val TOTAL_MATCH_BUDGET_MS = 6_500L
     private const val POLL_MS = 40L
     private const val NEGATIVE_RETRY_MS = 10_000L
+    private const val SECONDARY_RETRY_MS = 60_000L
 
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private val onlinePool = Executors.newFixedThreadPool(3)
@@ -39,6 +42,7 @@ object LyricsEngine {
         private set
 
     private var lastKey = ""
+    private var lastSecondarySignature = ""
     private var retryAfterElapsed = 0L
 
     fun start(context: Context) {
@@ -57,27 +61,56 @@ object LyricsEngine {
 
         val key = trackKey(snapshot)
         val now = SystemClock.elapsedRealtime()
-        if (key == lastKey && LyricStore.document.lines.isNotEmpty()) return
-        if (key == lastKey && now < retryAfterElapsed) return
+        val secondarySignature = secondarySignature(context)
+        val currentDocument = LyricStore.document
+        if (
+            key == lastKey &&
+            lastSecondarySignature == secondarySignature &&
+            currentDocument.lines.isNotEmpty() &&
+            documentSatisfiesSecondary(context, currentDocument)
+        ) return
+        if (
+            key == lastKey &&
+            lastSecondarySignature == secondarySignature &&
+            now < retryAfterElapsed
+        ) return
 
         if (key != lastKey) {
             lastKey = key
+            lastSecondarySignature = secondarySignature
             retryAfterElapsed = 0L
             LyricStore.document = LyricDocument.EMPTY
+        } else if (lastSecondarySignature != secondarySignature) {
+            lastSecondarySignature = secondarySignature
+            retryAfterElapsed = 0L
         }
 
-        cache[key]?.let {
+        var wordFallback: LyricDocument? = null
+        var lineFallback: LyricDocument? = null
+
+        cache[key]?.let { cached ->
             if (trackKey(PlaybackStore.snapshot) == key) {
-                LyricStore.document = it
+                LyricStore.document = cached
+                if (documentSatisfiesSecondary(context, cached)) {
+                    diagnostics = diagnosticFor(
+                        key = key,
+                        state = "cache-hit",
+                        attempts = "cache",
+                        document = cached,
+                        elapsedMs = 0L
+                    )
+                    return
+                }
+                if (cached.hasWordTimings) wordFallback = cached
+                else if (cached.lines.isNotEmpty()) lineFallback = cached
                 diagnostics = diagnosticFor(
                     key = key,
-                    state = "cache-hit",
-                    attempts = "cache",
-                    document = it,
+                    state = "cache-enriching-secondary",
+                    attempts = "cache:SECONDARY_MISS",
+                    document = cached,
                     elapsedMs = 0L
                 )
             }
-            return
         }
 
         val query = TrackQuery(
@@ -89,18 +122,21 @@ object LyricsEngine {
         )
 
         val startedAt = SystemClock.elapsedRealtime()
-        var lineFallback: LyricDocument? = null
         val status = LinkedHashMap<String, ProviderOutcome?>()
 
         // Local I/O has no network latency, so evaluate it before launching the online race.
         val localOutcome = runProvider(context, LocalLyricProvider, query)
         status["本地"] = localOutcome
-        if (localOutcome.document?.hasWordTimings == true) {
-            finishMatch(context, key, localOutcome.document, "matched-word", status, startedAt)
-            return
-        }
-        if (localOutcome.document?.lines?.isNotEmpty() == true) {
-            lineFallback = localOutcome.document
+        val localDocument = localOutcome.document
+        if (localDocument?.hasWordTimings == true) {
+            LyricStore.document = localDocument
+            if (documentSatisfiesSecondary(context, localDocument)) {
+                finishMatch(context, key, localDocument, "matched-word", status, startedAt)
+                return
+            }
+            wordFallback = localDocument
+        } else if (localDocument?.lines?.isNotEmpty() == true) {
+            lineFallback = localDocument
         }
 
         val providers = listOf(
@@ -132,12 +168,15 @@ object LyricsEngine {
 
                 val elapsed = SystemClock.elapsedRealtime() - startedAt
                 val qq = status["QQ"]
-                if (qq?.document?.hasWordTimings == true) {
+                if (
+                    qq?.document?.hasWordTimings == true &&
+                    documentSatisfiesSecondary(context, qq.document)
+                ) {
                     finishMatch(context, key, qq.document, "matched-word", status, startedAt)
                     return
                 }
 
-                val backupWord = preferredBackupWord(status)
+                val backupWord = preferredBackupWord(context, status, requireSecondary = true)
                 val qqFinished = qq != null
                 if (backupWord != null && (qqFinished || elapsed >= QQ_GRACE_MS)) {
                     finishMatch(context, key, backupWord, "matched-word", status, startedAt)
@@ -158,14 +197,32 @@ object LyricsEngine {
 
             collectFinished(futures, status)
 
-            val finalWord = preferredWord(status)
-            if (finalWord != null) {
-                finishMatch(context, key, finalWord, "matched-word", status, startedAt)
+            val completeWord = preferredWord(context, status, requireSecondary = true)
+            if (completeWord != null) {
+                finishMatch(context, key, completeWord, "matched-word", status, startedAt)
+                return
+            }
+
+            val anyWord = wordFallback ?: preferredWord(
+                context,
+                status,
+                requireSecondary = false
+            )
+            if (anyWord != null) {
+                finishMatch(
+                    context,
+                    key,
+                    anyWord,
+                    "matched-word-secondary-unavailable",
+                    status,
+                    startedAt
+                )
                 return
             }
 
             if (lineFallback == null) {
-                lineFallback = preferredLine(status)
+                lineFallback = preferredLine(context, status, requireSecondary = true)
+                    ?: preferredLine(context, status, requireSecondary = false)
             }
             val line = lineFallback
             if (line != null) {
@@ -227,32 +284,62 @@ object LyricsEngine {
         }
     }
 
-    private fun preferredWord(status: Map<String, ProviderOutcome?>): LyricDocument? {
-        // User-facing priority is explicit: QQ first, then KuGou, then NetEase.
+    private fun preferredWord(
+        context: Context,
+        status: Map<String, ProviderOutcome?>,
+        requireSecondary: Boolean
+    ): LyricDocument? {
         for (name in listOf("QQ", "酷狗", "网易云")) {
-            val doc = status[name]?.document
-            if (doc?.hasWordTimings == true) return doc
+            val doc = status[name]?.document ?: continue
+            if (!doc.hasWordTimings) continue
+            if (!requireSecondary || documentSatisfiesSecondary(context, doc)) return doc
         }
         return null
     }
 
-    private fun preferredBackupWord(status: Map<String, ProviderOutcome?>): LyricDocument? {
+    private fun preferredBackupWord(
+        context: Context,
+        status: Map<String, ProviderOutcome?>,
+        requireSecondary: Boolean
+    ): LyricDocument? {
         for (name in listOf("酷狗", "网易云")) {
-            val doc = status[name]?.document
-            if (doc?.hasWordTimings == true) return doc
+            val doc = status[name]?.document ?: continue
+            if (!doc.hasWordTimings) continue
+            if (!requireSecondary || documentSatisfiesSecondary(context, doc)) return doc
         }
         return null
     }
 
-    private fun preferredLine(status: Map<String, ProviderOutcome?>): LyricDocument? {
-        // If no enhanced timeline exists anywhere, prefer QQ's same-catalog LRC,
-        // then KuGou, then NetEase. Local LRC is preserved separately and wins first.
+    private fun preferredLine(
+        context: Context,
+        status: Map<String, ProviderOutcome?>,
+        requireSecondary: Boolean
+    ): LyricDocument? {
         for (name in listOf("QQ", "酷狗", "网易云")) {
-            val doc = status[name]?.document
-            if (doc != null && doc.lines.isNotEmpty() && !doc.hasWordTimings) return doc
+            val doc = status[name]?.document ?: continue
+            if (doc.lines.isEmpty() || doc.hasWordTimings) continue
+            if (!requireSecondary || documentSatisfiesSecondary(context, doc)) return doc
         }
         return null
     }
+
+    private fun documentSatisfiesSecondary(
+        context: Context,
+        document: LyricDocument
+    ): Boolean {
+        if (!Prefs.secondaryLyricEnabled(context)) return true
+        return when (Prefs.secondaryLyricMode(context)) {
+            LyricSecondaryRules.MODE_ROMAJI -> document.hasRomaji
+            else -> document.hasTranslation
+        }
+    }
+
+    private fun secondarySignature(context: Context): String =
+        if (!Prefs.secondaryLyricEnabled(context)) {
+            "off"
+        } else {
+            "on:${Prefs.secondaryLyricMode(context)}"
+        }
 
     private fun allFinished(status: Map<String, ProviderOutcome?>): Boolean =
         listOf("QQ", "酷狗", "网易云").all { status[it] != null }
@@ -268,6 +355,9 @@ object LyricsEngine {
         val current = PlaybackStore.snapshot
         if (trackKey(current) != key) return
         store(key, document)
+        if (state == "matched-word-secondary-unavailable") {
+            retryAfterElapsed = SystemClock.elapsedRealtime() + SECONDARY_RETRY_MS
+        }
 
         // Persist every successful match in the app-private cache. This makes a later
         // next/previous round trip independent of volatile mediaId/session fields.
@@ -299,8 +389,24 @@ object LyricsEngine {
             val suffix = when {
                 outcome.error != null -> "ERR(${shortDiagnostic(outcome.error)})"
                 outcome.document == null || outcome.document.lines.isEmpty() -> "MISS"
-                outcome.document.hasWordTimings -> "WORD"
-                else -> "LRC"
+                outcome.document.hasWordTimings -> buildString {
+                    append("WORD")
+                    if (outcome.document.translationLineCount > 0) {
+                        append("+T").append(outcome.document.translationLineCount)
+                    }
+                    if (outcome.document.romajiLineCount > 0) {
+                        append("+R").append(outcome.document.romajiLineCount)
+                    }
+                }
+                else -> buildString {
+                    append("LRC")
+                    if (outcome.document.translationLineCount > 0) {
+                        append("+T").append(outcome.document.translationLineCount)
+                    }
+                    if (outcome.document.romajiLineCount > 0) {
+                        append("+R").append(outcome.document.romajiLineCount)
+                    }
+                }
             }
             "$name:$suffix[${outcome.elapsedMs}ms]"
         }.joinToString(" | ")
@@ -339,6 +445,8 @@ object LyricsEngine {
         wordTimed = document.hasWordTimings,
         lineCount = document.lines.size,
         wordCount = document.timedWordCount,
+        translationLineCount = document.translationLineCount,
+        romajiLineCount = document.romajiLineCount,
         elapsedMs = elapsedMs
     )
 

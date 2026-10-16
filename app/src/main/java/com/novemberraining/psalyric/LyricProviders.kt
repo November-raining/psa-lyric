@@ -60,6 +60,11 @@ object QQLyricProvider : LyricProvider {
         val durationMs: Long
     )
 
+    private data class LegacyAux(
+        val original: String,
+        val translation: String
+    )
+
     override fun load(context: Context, query: TrackQuery): LyricDocument? {
         val candidate = try {
             search(query)
@@ -69,7 +74,7 @@ object QQLyricProvider : LyricProvider {
 
         var wordError: Throwable? = null
         try {
-            loadMusicuWord(candidate)?.let { return it }
+            loadMusicuWord(context, candidate)?.let { return it }
         } catch (error: Throwable) {
             wordError = error
         }
@@ -90,7 +95,10 @@ object QQLyricProvider : LyricProvider {
         return null
     }
 
-    private fun loadMusicuWord(candidate: Candidate): LyricDocument? {
+    private fun loadMusicuWord(
+        context: Context,
+        candidate: Candidate
+    ): LyricDocument? {
         val param = JSONObject()
             .put("songMID", candidate.songMid)
             .put("songID", 0)
@@ -135,8 +143,6 @@ object QQLyricProvider : LyricProvider {
         val data = req?.optJSONObject("data")
             ?: throw LyricLookupException("musicu-no-data")
 
-        // Current anonymous PlayLyricInfo commonly returns the encrypted QRC in "lyric".
-        // Some variants expose a separate "qrc" field, so accept both.
         val payloads = linkedSetOf<String>()
         data.optString("lyric").takeIf { it.isNotBlank() }?.let(payloads::add)
         data.optString("qrc").takeIf { it.isNotBlank() }?.let(payloads::add)
@@ -153,24 +159,63 @@ object QQLyricProvider : LyricProvider {
         }
         if (enhanced.isBlank()) {
             if (decodeFailure != null) {
-                throw LyricLookupException("qrc-decode:${shortError(decodeFailure)}", decodeFailure)
+                throw LyricLookupException(
+                    "qrc-decode:${shortError(decodeFailure)}",
+                    decodeFailure
+                )
             }
             return null
         }
 
-        val translated = decodeQqAux(data.optString("trans"))
+        val wantTranslation =
+            Prefs.secondaryLyricEnabled(context) &&
+                Prefs.secondaryLyricMode(context) == LyricSecondaryRules.MODE_TRANSLATION
+
+        var original = ""
+        var translated = decodeQqAux(data.optString("trans"))
         val romaji = decodeQqAux(data.optString("roma"))
-        val doc = LyricParsers.parse(
-            lrc = "",
+
+        var doc = LyricParsers.parse(
+            lrc = original,
             translationLrc = translated,
             yrc = enhanced,
             romajiLrc = romaji
         )
+
+        // A successful QRC response does not guarantee a usable translation track.
+        // If translation is selected and zero rows merged, fetch original+translation
+        // from the legacy endpoint and align them onto the QRC timeline.
+        if (wantTranslation && doc.translationLineCount == 0) {
+            try {
+                val aux = loadLegacyAux(candidate, WORD_HTTP)
+                original = aux.original
+                translated = aux.translation
+                doc = LyricParsers.parse(
+                    lrc = original,
+                    translationLrc = translated,
+                    yrc = enhanced,
+                    romajiLrc = romaji
+                )
+            } catch (_: Throwable) {
+                // QRC stays usable even when optional translation enrichment fails.
+            }
+        }
+
         if (!doc.hasWordTimings) return null
         return doc.copy(source = "QQ · QRC")
     }
 
     private fun loadLegacyLrc(candidate: Candidate): LyricDocument? {
+        val aux = loadLegacyAux(candidate, FALLBACK_HTTP)
+        val doc = LyricParsers.parse(aux.original, aux.translation)
+            .copy(source = "QQ · LRC")
+        return doc.takeIf { it.lines.isNotEmpty() }
+    }
+
+    private fun loadLegacyAux(
+        candidate: Candidate,
+        policy: HttpPolicy
+    ): LegacyAux {
         val response = http(
             "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg" +
                 "?songmid=${enc(candidate.songMid)}&songtype=0&format=json&nobase64=1" +
@@ -178,13 +223,15 @@ object QQLyricProvider : LyricProvider {
                 "&notice=0&platform=yqq.json&needNewCode=0",
             "GET",
             referer = "https://y.qq.com/portal/player.html",
-            policy = FALLBACK_HTTP
+            policy = policy
         )
         val root = JSONObject(response)
-        val lyric = decodeEntities(root.optString("lyric", ""))
-        val trans = decodeEntities(root.optString("trans", root.optString("tlyric", "")))
-        val doc = LyricParsers.parse(lyric, trans).copy(source = "QQ · LRC")
-        return doc.takeIf { it.lines.isNotEmpty() }
+        return LegacyAux(
+            original = decodeEntities(root.optString("lyric", "")),
+            translation = decodeEntities(
+                root.optString("trans", root.optString("tlyric", ""))
+            )
+        )
     }
 
     private fun decodeQqWordPayload(raw: String): String {

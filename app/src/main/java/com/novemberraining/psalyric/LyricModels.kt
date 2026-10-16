@@ -38,6 +38,18 @@ data class LyricDocument(
     val timedWordCount: Int
         get() = lines.sumOf { it.words.size }
 
+    val translationLineCount: Int
+        get() = lines.count { it.translation.isNotBlank() }
+
+    val romajiLineCount: Int
+        get() = lines.count { it.romaji.isNotBlank() }
+
+    val hasTranslation: Boolean
+        get() = translationLineCount > 0
+
+    val hasRomaji: Boolean
+        get() = romajiLineCount > 0
+
     fun currentIndex(positionMs: Long): Int {
         if (lines.isEmpty()) return -1
         var lo = 0
