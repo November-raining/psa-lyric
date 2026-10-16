@@ -529,12 +529,20 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         val edge = edgeFade(centerY)
         if (edge <= 0f || frame.scale <= 0f) return
 
-        // md3Music/AMLL proportions: radius≈0.18em, spacing≈0.9em,
-        // start≈1.5em. Scale all three dots as one breathing group.
+        // md3Music/AMLL proportions stay unchanged. Only horizontal placement
+        // follows the same LEFT / RIGHT / CENTER alignment as the anchor lyric.
         val radius = font * 0.18f
         val spacing = font * 0.90f
-        val startX = font * 1.50f
-        val centerX = startX + spacing + radius
+        val anchorAlignment = if (Prefs.duet(context)) {
+            doc.lines[anchorIndex].alignment
+        } else {
+            DuetAlignment.LEFT
+        }
+        val centerX = AppleInterludePlacement.centerX(
+            width = width.toFloat(),
+            font = font,
+            alignment = anchorAlignment
+        )
 
         canvas.save()
         canvas.scale(frame.scale, frame.scale, centerX, centerY)
