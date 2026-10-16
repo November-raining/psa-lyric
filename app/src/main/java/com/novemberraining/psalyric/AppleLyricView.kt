@@ -75,6 +75,9 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
     private var downX = 0f
     private var lastTapAt = 0L
     private var velocity: VelocityTracker? = null
+    private var scrubbingProgress = false
+    private var scrubPositionMs = 0L
+    private var pressedControlIndex = -1
 
     private val lyricTop get() = height * 0.19f
     private val lyricBottom get() = height * 0.82f
@@ -808,20 +811,68 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         )
 
     private fun drawControls(canvas: Canvas, s: PlaybackSnapshot) {
-        val scale = height / 700f
-        val y = height - 54f * scale
+        val scale = ApplePlaybackControls.scale(height.toFloat())
+        val y = ApplePlaybackControls.buttonY(height.toFloat())
         val centers = floatArrayOf(width * 0.30f, width * 0.50f, width * 0.70f)
-        val progressY = height - 96f * scale
+        val progressY = ApplePlaybackControls.progressY(height.toFloat())
+        val progressLeft = ApplePlaybackControls.progressLeft(height.toFloat())
+        val progressRight = ApplePlaybackControls.progressRight(
+            width.toFloat(),
+            height.toFloat()
+        )
+
         shapePaint.strokeWidth = 3f * scale
         shapePaint.strokeCap = Paint.Cap.ROUND
         shapePaint.color = 0x55FFFFFF
-        canvas.drawLine(22f * scale, progressY, width - 22f * scale, progressY, shapePaint)
+        canvas.drawLine(
+            progressLeft,
+            progressY,
+            progressRight,
+            progressY,
+            shapePaint
+        )
+
         val duration = s.durationMs
-        if (duration > 0) {
-            val ratio = (s.estimatedPosition().toFloat() / duration).coerceIn(0f, 1f)
-            shapePaint.color = 0xE8FFFFFF.toInt()
-            canvas.drawLine(22f * scale, progressY, 22f * scale + (width - 44f * scale) * ratio, progressY, shapePaint)
+        val displayedPosition = if (scrubbingProgress) {
+            scrubPositionMs.coerceIn(0L, duration.coerceAtLeast(0L))
+        } else {
+            s.estimatedPosition()
         }
+        if (duration > 0L) {
+            val ratio = (displayedPosition.toFloat() / duration).coerceIn(0f, 1f)
+            shapePaint.color = 0xE8FFFFFF.toInt()
+            canvas.drawLine(
+                progressLeft,
+                progressY,
+                progressLeft + (progressRight - progressLeft) * ratio,
+                progressY,
+                shapePaint
+            )
+        }
+
+        // QQ Music car layout: current time under the left end, total duration
+        // under the right end. During scrubbing the left label previews the seek.
+        metaPaint.shader = null
+        metaPaint.maskFilter = null
+        metaPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+        metaPaint.color = Color.WHITE
+        metaPaint.alpha = 165
+        metaPaint.textSize = 13f * scale
+        val timeY = progressY + 25f * scale
+        val currentText = ApplePlaybackControls.formatTime(displayedPosition)
+        val durationText = if (duration > 0L) {
+            ApplePlaybackControls.formatTime(duration)
+        } else {
+            "--:--"
+        }
+        canvas.drawText(currentText, progressLeft, timeY, metaPaint)
+        canvas.drawText(
+            durationText,
+            progressRight - metaPaint.measureText(durationText),
+            timeY,
+            metaPaint
+        )
+
         for (i in centers.indices) {
             canvas.save()
             canvas.scale(buttonScales[i].position, buttonScales[i].position, centers[i], y)
@@ -862,12 +913,72 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
+                downX = event.x
+                downY = event.y
+                lastY = event.y
+                browsing = false
+                autoReturnAt = 0L
+
+                val snapshot = PlaybackStore.snapshot
+                if (
+                    snapshot.durationMs > 0L &&
+                    ApplePlaybackControls.isProgressHit(
+                        event.x,
+                        event.y,
+                        width.toFloat(),
+                        height.toFloat()
+                    )
+                ) {
+                    scrubbingProgress = true
+                    scrubPositionMs = ApplePlaybackControls.positionForX(
+                        event.x,
+                        width.toFloat(),
+                        height.toFloat(),
+                        snapshot.durationMs
+                    )
+                    pressedControlIndex = -1
+                    velocity?.recycle()
+                    velocity = null
+                    invalidate()
+                    return true
+                }
+
+                pressedControlIndex = ApplePlaybackControls.buttonIndexAt(
+                    event.x,
+                    event.y,
+                    width.toFloat(),
+                    height.toFloat()
+                )
+                if (pressedControlIndex >= 0) {
+                    velocity?.recycle()
+                    velocity = null
+                    return true
+                }
+
                 velocity?.recycle()
                 velocity = VelocityTracker.obtain().also { it.addMovement(event) }
-                downX = event.x; downY = event.y; lastY = event.y
                 return true
             }
+
             MotionEvent.ACTION_MOVE -> {
+                if (scrubbingProgress) {
+                    val duration = PlaybackStore.snapshot.durationMs
+                    if (duration > 0L) {
+                        scrubPositionMs = ApplePlaybackControls.positionForX(
+                            event.x,
+                            width.toFloat(),
+                            height.toFloat(),
+                            duration
+                        )
+                        invalidate()
+                    }
+                    return true
+                }
+
+                if (pressedControlIndex >= 0) {
+                    return true
+                }
+
                 velocity?.addMovement(event)
                 if (event.y < lyricBottom && downY < lyricBottom) {
                     val dy = event.y - lastY
@@ -884,41 +995,82 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
                 lastY = event.y
                 return true
             }
+
             MotionEvent.ACTION_UP -> {
+                if (scrubbingProgress) {
+                    val duration = PlaybackStore.snapshot.durationMs
+                    if (duration > 0L) {
+                        scrubPositionMs = ApplePlaybackControls.positionForX(
+                            event.x,
+                            width.toFloat(),
+                            height.toFloat(),
+                            duration
+                        )
+                        PlaybackStore.seekTo(scrubPositionMs)
+                    }
+                    scrubbingProgress = false
+                    pressedControlIndex = -1
+                    velocity?.recycle()
+                    velocity = null
+                    invalidate()
+                    return true
+                }
+
+                if (pressedControlIndex >= 0) {
+                    val releasedIndex = ApplePlaybackControls.buttonIndexAt(
+                        event.x,
+                        event.y,
+                        width.toFloat(),
+                        height.toFloat()
+                    )
+                    if (releasedIndex == pressedControlIndex) {
+                        handleControlTap(pressedControlIndex)
+                    }
+                    pressedControlIndex = -1
+                    velocity?.recycle()
+                    velocity = null
+                    return true
+                }
+
                 velocity?.addMovement(event)
                 velocity?.computeCurrentVelocity(1000)
-                val moved = Math.hypot((event.x - downX).toDouble(), (event.y - downY).toDouble()).toFloat()
-                if (event.y > lyricBottom) {
-                    handleControlTap(event.x)
-                } else if (browsing) {
+                val moved = Math.hypot(
+                    (event.x - downX).toDouble(),
+                    (event.y - downY).toDouble()
+                ).toFloat()
+
+                if (browsing) {
                     val vy = velocity?.yVelocity ?: 0f
                     val inertia = (vy * 0.30f).coerceIn(-300f, 300f)
                     scroll.velocity = vy
                     scroll.retarget(scroll.position + inertia)
                     autoReturnAt = SystemClock.elapsedRealtime() + 5_000L
-                } else if (moved < 10f) {
+                } else if (event.y < lyricBottom && downY < lyricBottom && moved < 10f) {
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastTapAt <= 320L) seekLineAt(event.y)
                     lastTapAt = now
                 }
-                velocity?.recycle(); velocity = null
+
+                velocity?.recycle()
+                velocity = null
                 return true
             }
+
             MotionEvent.ACTION_CANCEL -> {
-                velocity?.recycle(); velocity = null
+                velocity?.recycle()
+                velocity = null
                 browsing = false
+                scrubbingProgress = false
+                pressedControlIndex = -1
+                invalidate()
                 return true
             }
         }
         return super.onTouchEvent(event)
     }
 
-    private fun handleControlTap(x: Float) {
-        val index = when {
-            x < width * 0.40f -> 0
-            x < width * 0.60f -> 1
-            else -> 2
-        }
+    private fun handleControlTap(index: Int) {
+        if (index !in 0..2) return
         buttonScales[index].snap(0.78f)
         buttonScales[index].retarget(1f)
         when (index) {
