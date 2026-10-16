@@ -3,23 +3,43 @@ package com.novemberraining.psalyric
 /**
  * Assigns left/right/center alignment for duet lyrics while preserving word timing.
  *
- * Supported structures mirror the mature patterns used by md3Music and QRC tooling:
- * - inline gender prefixes: "男：...", "女：...", "合：..."
- * - standalone gender marker rows whose state applies to following lyric rows
- * - standalone singer marker rows such as "周杰伦：" / "Lara梁心颐："
- * - multi-singer marker rows such as "周杰伦/Lara梁心颐：" -> center
+ * The layout intentionally accepts several lyric-authoring conventions because
+ * providers do not expose duet roles consistently:
+ * - inline gender roles: "男：...", "女：...", "合：..."
+ * - bracket gender roles: "(男)...", "（女）...", "[合]..."
+ * - standalone gender marker rows whose state applies to following rows
+ * - standalone singer marker rows: "周杰伦：" / "Lara梁心颐："
+ * - inline singer aliases: "杰：...", "SA：..."
+ * - multi-singer labels: "周杰伦/Lara梁心颐：..." -> center
  *
- * Singer/role marker rows are metadata rather than sung text, so they are removed.
+ * Arbitrary singer-name prefixes are only activated when two distinct singer
+ * labels are found in the same document. This avoids mistaking ordinary
+ * colon-containing lyric text or metadata for duet roles.
  */
 object DuetLayout {
-    private val genderPrefix = Regex("""^\s*(男|女|合)\s*[:：]\s*""")
-    private val singerMarker = Regex("""^\s*(.+?)\s*[:：]\s*$""")
+    private data class RolePrefix(
+        val role: String,
+        val content: String,
+        val consumedChars: Int
+    )
+
+    private data class SingerPrefix(
+        val singers: List<String>,
+        val content: String,
+        val consumedChars: Int
+    )
+
+    private val genderColon = Regex("""^\s*(男|女|合)\s*[:：]\s*""")
+    private val genderBracket = Regex(
+        """^\s*[\(（\[【]\s*(男|女|合)\s*[\)）\]】]\s*[:：]?\s*"""
+    )
+    private val singerColon = Regex("""^\s*([^:：]{1,48}?)\s*[:：]\s*(.*)$""")
     private val singerSplit = Regex("""\s*[/&＆、+]\s*""")
-    private val credits = Regex(
-        """^\s*(lyrics\s*by|composed\s*by|produced\s*by|music\s*by|words\s*by|""" +
+    private val creditLabel = Regex(
+        """^(lyrics\s*by|composed\s*by|produced\s*by|music\s*by|words\s*by|""" +
             """arranged\s*by|mixed\s*by|recorded\s*by|written\s*by|""" +
             """作词|作曲|编曲|混音|录音|制作人|制作|词|曲|""" +
-            """cover|vocal|guitar|bass|drum|keyboard|piano|string)\s*(?:[:：]|$)""",
+            """cover|vocal|guitar|bass|drum|keyboard|piano|string)$""",
         RegexOption.IGNORE_CASE
     )
 
@@ -27,28 +47,32 @@ object DuetLayout {
         if (lines.isEmpty()) return lines
 
         var firstGender: String? = null
-        var leftSinger: String? = null
-        var rightSinger: String? = null
+        val discoveredSingers = ArrayList<String>(4)
 
-        // Discover the two primary voices first so marker order is deterministic.
+        // First pass: discover role vocabulary before mutating any row.
         for (line in lines) {
             val text = line.text.trim()
-            val gender = genderPrefix.find(text)?.groupValues?.getOrNull(1)
-            if (gender == "男" || gender == "女") {
-                firstGender = firstGender ?: gender
+            val gender = genderPrefix(text)
+            if (gender != null) {
+                if (gender.role == "男" || gender.role == "女") {
+                    firstGender = firstGender ?: gender.role
+                }
                 continue
             }
 
-            val singers = singerMarker(text)
-            if (singers?.size == 1) {
-                val singer = singers.first()
-                if (leftSinger == null) {
-                    leftSinger = singer
-                } else if (rightSinger == null && !sameSinger(leftSinger, singer)) {
-                    rightSinger = singer
-                }
+            val singer = singerPrefix(text) ?: continue
+            if (singer.singers.size != 1) continue
+            val value = singer.singers.first()
+            if (discoveredSingers.none { sameSinger(it, value) }) {
+                discoveredSingers += value
             }
         }
+
+        // Generic aliases such as "杰：" / "SA：" are only meaningful when at
+        // least two different voices are evidenced by the same lyric document.
+        val singerMode = discoveredSingers.size >= 2
+        val leftSinger = discoveredSingers.getOrNull(0)
+        val rightSinger = discoveredSingers.getOrNull(1)
 
         val leftGender = firstGender ?: "男"
         val rightGender = if (leftGender == "男") "女" else "男"
@@ -59,42 +83,83 @@ object DuetLayout {
 
         for (line in lines) {
             val text = line.text
-            val genderMatch = genderPrefix.find(text)
-            if (genderMatch != null) {
-                val gender = genderMatch.groupValues[1]
-                activeGender = gender
+
+            val gender = genderPrefix(text)
+            if (gender != null) {
+                activeGender = gender.role
                 activeSingers = null
-                val cleanedText = text.substring(genderMatch.range.last + 1).trimStart()
-                if (cleanedText.isBlank()) {
-                    // Standalone role marker: keep its state, not its visual row.
+                if (gender.content.isBlank()) {
+                    // Pure marker row: state only, not visible lyrics.
                     continue
                 }
 
+                val cleaned = gender.content.trim()
                 out += line.copy(
-                    text = cleanedText.trim(),
-                    translation = stripGenderPrefix(line.translation),
-                    romaji = stripGenderPrefix(line.romaji),
+                    text = cleaned,
+                    translation = stripSecondaryPrefix(
+                        line.translation,
+                        singerMode,
+                        discoveredSingers
+                    ),
+                    romaji = stripSecondaryPrefix(
+                        line.romaji,
+                        singerMode,
+                        discoveredSingers
+                    ),
                     words = stripPrefixWords(
                         line.words,
-                        genderMatch.range.last + 1
+                        cleaned,
+                        gender.consumedChars
                     ),
-                    alignment = genderAlignment(gender, leftGender, rightGender)
+                    alignment = genderAlignment(
+                        gender.role,
+                        leftGender,
+                        rightGender
+                    )
                 )
                 continue
             }
 
-            val singers = singerMarker(text)
-            if (singers != null) {
-                activeSingers = singers
+            val singer = if (singerMode) singerPrefix(text) else null
+            if (singer != null && singersBelongToDocument(singer.singers, discoveredSingers)) {
+                activeSingers = singer.singers
                 activeGender = null
-                // QRC singer marker rows are metadata and should not appear as lyrics.
+                if (singer.content.isBlank()) {
+                    // Pure singer marker row.
+                    continue
+                }
+
+                val cleaned = singer.content.trim()
+                out += line.copy(
+                    text = cleaned,
+                    translation = stripSecondaryPrefix(
+                        line.translation,
+                        singerMode,
+                        discoveredSingers
+                    ),
+                    romaji = stripSecondaryPrefix(
+                        line.romaji,
+                        singerMode,
+                        discoveredSingers
+                    ),
+                    words = stripPrefixWords(
+                        line.words,
+                        cleaned,
+                        singer.consumedChars
+                    ),
+                    alignment = singerAlignment(
+                        singer.singers,
+                        leftSinger,
+                        rightSinger
+                    )
+                )
                 continue
             }
 
             val alignment = when {
                 activeGender != null ->
                     genderAlignment(activeGender, leftGender, rightGender)
-                activeSingers != null ->
+                singerMode && activeSingers != null ->
                     singerAlignment(activeSingers, leftSinger, rightSinger)
                 else -> line.alignment
             }
@@ -104,25 +169,71 @@ object DuetLayout {
         return out
     }
 
-    private fun singerMarker(text: String): List<String>? {
-        if (text.isBlank()) return null
-        if (genderPrefix.containsMatchIn(text)) return null
-        if (credits.containsMatchIn(text)) return null
+    private fun genderPrefix(text: String): RolePrefix? {
+        val bracket = genderBracket.find(text)
+        if (bracket != null) {
+            return RolePrefix(
+                role = bracket.groupValues[1],
+                content = text.substring(bracket.range.last + 1),
+                consumedChars = bracket.range.last + 1
+            )
+        }
 
-        val match = singerMarker.matchEntire(text) ?: return null
+        val colon = genderColon.find(text) ?: return null
+        return RolePrefix(
+            role = colon.groupValues[1],
+            content = text.substring(colon.range.last + 1),
+            consumedChars = colon.range.last + 1
+        )
+    }
+
+    private fun singerPrefix(text: String): SingerPrefix? {
+        if (text.isBlank()) return null
+        if (genderPrefix(text) != null) return null
+
+        val match = singerColon.matchEntire(text) ?: return null
         val label = match.groupValues[1].trim()
-        if (label.isBlank() || label.length > 80) return null
-        if (label.any { it == '[' || it == ']' || it == '(' || it == ')' }) return null
+        if (!plausibleSingerLabel(label)) return null
 
         val singers = label
             .split(singerSplit)
             .map { it.trim() }
             .filter { it.isNotBlank() }
-        return singers.takeIf { it.isNotEmpty() }
+        if (singers.isEmpty()) return null
+
+        return SingerPrefix(
+            singers = singers,
+            content = match.groupValues[2],
+            consumedChars = match.groups[2]?.range?.first ?: text.length
+        )
+    }
+
+    private fun plausibleSingerLabel(label: String): Boolean {
+        if (label.isBlank() || label.length > 48) return false
+        if (creditLabel.matches(label.trim())) return false
+        if (label.any { it == '[' || it == ']' || it == '(' || it == ')' || it == '（' || it == '）' }) {
+            return false
+        }
+        // A lyric sentence before a colon is unlikely to be a singer label.
+        if (label.count { it.isWhitespace() } > 3) return false
+        return true
+    }
+
+    private fun singersBelongToDocument(
+        singers: List<String>,
+        discovered: List<String>
+    ): Boolean {
+        if (singers.size > 1) {
+            return singers.all { singer ->
+                discovered.any { sameSinger(it, singer) }
+            }
+        }
+        val singer = singers.firstOrNull() ?: return false
+        return discovered.any { sameSinger(it, singer) }
     }
 
     private fun genderAlignment(
-        gender: String,
+        gender: String?,
         leftGender: String,
         rightGender: String
     ): DuetAlignment = when {
@@ -133,14 +244,19 @@ object DuetLayout {
     }
 
     private fun singerAlignment(
-        singers: List<String>,
+        singers: List<String>?,
         leftSinger: String?,
         rightSinger: String?
     ): DuetAlignment {
+        if (singers.isNullOrEmpty()) return DuetAlignment.LEFT
         if (singers.size > 1) return DuetAlignment.CENTER
-        val singer = singers.firstOrNull() ?: return DuetAlignment.LEFT
+
+        val singer = singers.first()
         if (leftSinger != null && sameSinger(leftSinger, singer)) return DuetAlignment.LEFT
         if (rightSinger != null && sameSinger(rightSinger, singer)) return DuetAlignment.RIGHT
+
+        // A third independent vocalist/background role is centered, mirroring
+        // md3Music's "additional agent" behavior.
         return DuetAlignment.CENTER
     }
 
@@ -151,16 +267,45 @@ object DuetLayout {
         value.lowercase()
             .replace(Regex("""[\s._\-·・]+"""), "")
 
-    private fun stripGenderPrefix(value: String): String =
-        genderPrefix.replaceFirst(value, "").trim()
+    private fun stripSecondaryPrefix(
+        value: String,
+        singerMode: Boolean,
+        discoveredSingers: List<String>
+    ): String {
+        if (value.isBlank()) return value
+
+        val gender = genderPrefix(value)
+        if (gender != null) return gender.content.trim()
+
+        if (singerMode) {
+            val singer = singerPrefix(value)
+            if (
+                singer != null &&
+                singersBelongToDocument(singer.singers, discoveredSingers)
+            ) {
+                return singer.content.trim()
+            }
+        }
+        return value.trim()
+    }
 
     private fun stripPrefixWords(
         words: List<WordTiming>,
-        prefixCharCount: Int
+        cleanedText: String,
+        fallbackPrefixChars: Int
     ): List<WordTiming> {
-        if (words.isEmpty() || prefixCharCount <= 0) return words
+        if (words.isEmpty()) return words
 
-        var remaining = prefixCharCount
+        val source = words.joinToString(separator = "") { it.text }
+        val located = source.indexOf(cleanedText)
+        val prefixChars = when {
+            located >= 0 -> located
+            fallbackPrefixChars in 1 until source.length -> fallbackPrefixChars
+            else -> return words
+        }
+        if (prefixChars <= 0) return words
+
+        var remaining = prefixChars
         val out = ArrayList<WordTiming>(words.size)
         for (word in words) {
             if (remaining <= 0) {
@@ -176,11 +321,11 @@ object DuetLayout {
 
             val tail = word.text.substring(remaining)
             remaining = 0
-            if (tail.isNotEmpty()) out += word.copy(text = tail)
+            if (tail.isNotEmpty()) {
+                out += word.copy(text = tail)
+            }
         }
 
-        // If the word segmentation did not cover the prefix reliably, preserve timing
-        // rather than risk deleting actual lyrics.
-        return if (remaining > 0) words else out
+        return if (remaining > 0 || out.isEmpty()) words else out
     }
 }
