@@ -21,6 +21,11 @@ android {
         }
     }
 
+    lint {
+        // This app is intentionally side-loaded on an Android 9 head unit, not published to Play.
+        disable += "ExpiredTargetSdkVersion"
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
