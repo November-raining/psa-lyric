@@ -241,6 +241,13 @@ class MainActivity : Activity() {
             append("；").append(if (lyric.wordTimed) "逐字" else "逐行")
             append(" lines=").append(lyric.lineCount)
                 .append(" words=").append(lyric.wordCount)
+            append("\n副行数据：翻译=").append(lyric.translationLineCount)
+                .append(" 罗马音=").append(lyric.romajiLineCount)
+                .append(" 当前=")
+                .append(
+                    if (!Prefs.secondaryLyricEnabled(this@MainActivity)) "关闭"
+                    else Prefs.secondaryLyricMode(this@MainActivity)
+                )
             append("\n匹配状态：").append(lyric.state)
                 .append(" elapsed=").append(lyric.elapsedMs).append("ms")
             if (lyric.attempts.isNotBlank()) {
