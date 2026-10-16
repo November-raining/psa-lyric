@@ -203,11 +203,7 @@ object LyricsEngine {
                 return
             }
 
-            val anyWord = wordFallback ?: preferredWord(
-                context,
-                status,
-                requireSecondary = false
-            )
+            val anyWord = bestAvailableWord(context, wordFallback, status)
             if (anyWord != null) {
                 finishMatch(
                     context,
@@ -310,6 +306,26 @@ object LyricsEngine {
         return null
     }
 
+    private fun bestAvailableWord(
+        context: Context,
+        localFallback: LyricDocument?,
+        status: Map<String, ProviderOutcome?>
+    ): LyricDocument? {
+        val candidates = ArrayList<LyricDocument>()
+        if (localFallback?.hasWordTimings == true) candidates += localFallback
+        for (name in listOf("QQ", "酷狗", "网易云")) {
+            val doc = status[name]?.document ?: continue
+            if (doc.hasWordTimings) candidates += doc
+        }
+        if (candidates.isEmpty()) return null
+        if (!Prefs.secondaryLyricEnabled(context)) return candidates.first()
+
+        val mode = Prefs.secondaryLyricMode(context)
+        return candidates.maxByOrNull {
+            LyricSecondaryRules.dataLineCount(it, mode)
+        }
+    }
+
     private fun preferredLine(
         context: Context,
         status: Map<String, ProviderOutcome?>,
@@ -328,10 +344,10 @@ object LyricsEngine {
         document: LyricDocument
     ): Boolean {
         if (!Prefs.secondaryLyricEnabled(context)) return true
-        return when (Prefs.secondaryLyricMode(context)) {
-            LyricSecondaryRules.MODE_ROMAJI -> document.hasRomaji
-            else -> document.hasTranslation
-        }
+        return LyricSecondaryRules.hasAdequateData(
+            document,
+            Prefs.secondaryLyricMode(context)
+        )
     }
 
     private fun secondarySignature(context: Context): String =
