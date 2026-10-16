@@ -52,6 +52,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
     private var cachedFont = -1f
     private var cachedSecondaryEnabled = true
     private var cachedSecondaryMode = LyricSecondaryRules.MODE_TRANSLATION
+    private var cachedLineSpacing = Float.NaN
     private var currentIndex = -1
     private var lastFrameNs = 0L
     private var firstLayout = true
@@ -176,19 +177,22 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         val font = designFontPx()
         val secondaryEnabled = Prefs.secondaryLyricEnabled(context)
         val secondaryMode = Prefs.secondaryLyricMode(context)
+        val lineSpacing = Prefs.lineSpacing(context)
         if (
             cachedDoc === doc &&
             cachedWidth == width &&
             abs(cachedFont - font) < 0.1f &&
             cachedSecondaryEnabled == secondaryEnabled &&
-            cachedSecondaryMode == secondaryMode
+            cachedSecondaryMode == secondaryMode &&
+            abs(cachedLineSpacing - lineSpacing) < 0.001f
         ) return
         cachedDoc = doc
         cachedWidth = width
         cachedFont = font
         cachedSecondaryEnabled = secondaryEnabled
         cachedSecondaryMode = secondaryMode
-        visual = buildVisual(doc, font)
+        cachedLineSpacing = lineSpacing
+        visual = buildVisual(doc, font, lineSpacing)
         firstLayout = true
         currentIndex = -1
         scales.clear()
@@ -201,7 +205,11 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         glowThresholdMs = resolveGlowThreshold(doc)
     }
 
-    private fun buildVisual(doc: LyricDocument, font: Float): List<VisualLine> {
+    private fun buildVisual(
+        doc: LyricDocument,
+        font: Float,
+        lineSpacing: Float = Prefs.lineSpacing(context)
+    ): List<VisualLine> {
         if (width <= 0) return emptyList()
         configureTextPaint(font)
         val maxWidth = width - 44f * height / 700f
@@ -211,7 +219,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             val rows = if (Prefs.balancedWrap(context)) balancedRows(line.text, maxWidth) else greedyRows(line.text, maxWidth)
             val textHeight = rows.size * font * 1.08f
             val sub = if (secondaryText(line).isNotBlank()) font * 0.72f else 0f
-            val gap = font * 0.62f * Prefs.lineSpacing(context)
+            val gap = font * 0.62f * lineSpacing
             val h = textHeight + sub + gap
             out += VisualLine(i, rows, top, h)
             top += h
