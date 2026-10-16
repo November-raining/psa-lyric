@@ -206,7 +206,7 @@ class MainActivity : Activity() {
         row.addView(current)
         root.addView(row)
         root.addView(SeekBar(this).apply {
-            max = max - min
+            this.max = max - min
             progress = value.coerceIn(min, max) - min
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(b: SeekBar?, p: Int, fromUser: Boolean) {
