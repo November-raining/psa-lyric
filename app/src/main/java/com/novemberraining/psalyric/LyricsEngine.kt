@@ -289,15 +289,16 @@ object LyricsEngine {
         }.joinToString(" | ")
 
     private fun shortDiagnostic(error: Throwable): String {
-        val root = generateSequence(error) { it.cause }.last()
-        val message = root.message
+        // Provider wrappers carry stage information such as musicu=... / legacy=....
+        // Preserve that top-level message instead of collapsing to the deepest HTTP cause.
+        val message = error.message
             ?.replace('\n', ' ')
             ?.replace('\r', ' ')
             ?.trim()
-            ?.take(72)
+            ?.take(96)
             .orEmpty()
-        return if (message.isBlank()) root.javaClass.simpleName
-        else "${root.javaClass.simpleName}:$message"
+        return if (message.isBlank()) error.javaClass.simpleName
+        else "${error.javaClass.simpleName}:$message"
     }
 
     private fun store(key: String, document: LyricDocument) {
