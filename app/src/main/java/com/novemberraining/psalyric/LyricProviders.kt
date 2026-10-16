@@ -182,20 +182,28 @@ object QQLyricProvider : LyricProvider {
             romajiLrc = romaji
         )
 
-        // A successful QRC response does not guarantee a usable translation track.
-        // If translation is selected and zero rows merged, fetch original+translation
-        // from the legacy endpoint and align them onto the QRC timeline.
-        if (wantTranslation && doc.translationLineCount == 0) {
+        // A successful QRC response does not guarantee a useful translation track.
+        // Treat sparse rows as incomplete as well: a 5/34 cache is visibly intermittent.
+        // Query the legacy translation track and union any additional rows onto the same
+        // QRC timeline. This preserves word timing while upgrading secondary coverage.
+        if (
+            wantTranslation &&
+            !LyricSecondaryRules.hasAdequateData(
+                doc,
+                LyricSecondaryRules.MODE_TRANSLATION
+            )
+        ) {
             try {
                 val aux = loadLegacyAux(candidate, WORD_HTTP)
                 original = aux.original
                 translated = aux.translation
-                doc = LyricParsers.parse(
+                val legacyEnriched = LyricParsers.parse(
                     lrc = original,
                     translationLrc = translated,
                     yrc = enhanced,
                     romajiLrc = romaji
                 )
+                doc = mergeSecondaryRows(doc, legacyEnriched)
             } catch (_: Throwable) {
                 // QRC stays usable even when optional translation enrichment fails.
             }
@@ -203,6 +211,27 @@ object QQLyricProvider : LyricProvider {
 
         if (!doc.hasWordTimings) return null
         return doc.copy(source = "QQ · QRC")
+    }
+
+    private fun mergeSecondaryRows(
+        primary: LyricDocument,
+        enrichment: LyricDocument
+    ): LyricDocument {
+        if (primary.lines.size != enrichment.lines.size) {
+            return if (
+                enrichment.translationLineCount > primary.translationLineCount ||
+                enrichment.romajiLineCount > primary.romajiLineCount
+            ) enrichment else primary
+        }
+
+        val merged = primary.lines.mapIndexed { index, line ->
+            val extra = enrichment.lines[index]
+            line.copy(
+                translation = line.translation.ifBlank { extra.translation },
+                romaji = line.romaji.ifBlank { extra.romaji }
+            )
+        }
+        return primary.copy(lines = merged)
     }
 
     private fun loadLegacyLrc(candidate: Candidate): LyricDocument? {
