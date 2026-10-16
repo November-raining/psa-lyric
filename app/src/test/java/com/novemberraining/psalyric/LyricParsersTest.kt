@@ -28,8 +28,13 @@ class LyricParsersTest {
     }
 
     @Test fun duetPrefixChoosesAlignment() {
-        val doc = LyricParsers.parse("[00:01.000]女：你好")
-        assertEquals(DuetAlignment.RIGHT, doc.lines[0].alignment)
+        val doc = LyricParsers.parse(
+            "[00:01.000]女：你好\n[00:02.000]男：你好啊"
+        )
+        // md3Music-style grouping: the first encountered primary voice owns left.
+        assertEquals(DuetAlignment.LEFT, doc.lines[0].alignment)
+        assertEquals(DuetAlignment.RIGHT, doc.lines[1].alignment)
         assertEquals("你好", doc.lines[0].text)
+        assertEquals("你好啊", doc.lines[1].text)
     }
 }
