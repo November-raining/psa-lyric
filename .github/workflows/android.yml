@@ -43,7 +43,7 @@ jobs:
       - name: SHA-256
         run: |
           sha256sum app/build/outputs/apk/release/app-release-unsigned.apk | tee app/build/outputs/apk/release/SHA256SUMS.txt
-          printf 'commit=%s\nversion=0.1.12\n' "$GITHUB_SHA" | tee app/build/outputs/apk/release/BUILD_INFO.txt
+          printf 'commit=%s\nversion=0.1.13\n' "$GITHUB_SHA" | tee app/build/outputs/apk/release/BUILD_INFO.txt
 
       - uses: actions/upload-artifact@v4
         with:

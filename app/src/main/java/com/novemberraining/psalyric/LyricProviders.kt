@@ -210,7 +210,7 @@ object QQLyricProvider : LyricProvider {
         }
 
         if (!doc.hasWordTimings) return null
-        return doc.copy(source = "QQ · QRC")
+        return doc.copy(source = "QQ · QRC", resolvedArtist = candidate.artist)
     }
 
     private fun mergeSecondaryRows(
@@ -237,7 +237,7 @@ object QQLyricProvider : LyricProvider {
     private fun loadLegacyLrc(candidate: Candidate): LyricDocument? {
         val aux = loadLegacyAux(candidate, FALLBACK_HTTP)
         val doc = LyricParsers.parse(aux.original, aux.translation)
-            .copy(source = "QQ · LRC")
+            .copy(source = "QQ · LRC", resolvedArtist = candidate.artist)
         return doc.takeIf { it.lines.isNotEmpty() }
     }
 
@@ -595,7 +595,7 @@ object KugouLyricProvider : LyricProvider {
                     val krc = downloadKrc(candidate)
                     val lines = LyricParsers.parseKrc(krc)
                     if (lines.isNotEmpty()) {
-                        return LyricDocument(lines, source = "酷狗 · KRC")
+                        return LyricDocument(lines, source = "酷狗 · KRC", resolvedArtist = song.artist)
                     }
                 } catch (error: Throwable) {
                     krcError = error
@@ -611,7 +611,7 @@ object KugouLyricProvider : LyricProvider {
             val candidates = searchLyricCandidates(song, query)
             for (candidate in candidates.take(3)) {
                 val lrc = downloadLrc(candidate)
-                val doc = LyricParsers.parse(lrc).copy(source = "酷狗 · LRC")
+                val doc = LyricParsers.parse(lrc).copy(source = "酷狗 · LRC", resolvedArtist = song.artist)
                 if (doc.lines.isNotEmpty()) return doc
             }
         } catch (error: Throwable) {

@@ -47,6 +47,38 @@ object ArtistSelection {
         return best
     }
 
+    /**
+     * Online lyric search often resolves the exact QQ/Kugou song even when the
+     * car MediaSession exposes only the primary singer. Promote that richer
+     * identity only when it still contains the media-session artist.
+     */
+    fun chooseResolved(primary: String, resolved: String): String {
+        val base = primary.trim()
+        val candidate = resolved.trim()
+        if (candidate.isBlank()) return normalizeSeparators(base)
+        if (base.isBlank()) return normalizeSeparators(candidate)
+
+        val baseKey = canonical(base)
+        val candidateKey = canonical(candidate)
+        val compatible =
+            candidateKey.contains(baseKey) ||
+                baseKey.contains(candidateKey) ||
+                artistParts(base).any { left ->
+                    artistParts(candidate).any { right ->
+                        canonical(left) == canonical(right)
+                    }
+                }
+
+        return if (
+            compatible &&
+            collaborationRichness(candidate) >= collaborationRichness(base)
+        ) {
+            normalizeSeparators(candidate)
+        } else {
+            normalizeSeparators(base)
+        }
+    }
+
     fun looksCollaborative(value: String): Boolean =
         collaborationRichness(value) > 0
 
@@ -59,6 +91,20 @@ object ArtistSelection {
         }
         return score
     }
+
+    private fun artistParts(value: String): List<String> =
+        value.split(Regex("""\s*(?:[&＆/、,，]|\bfeat\.?\b|\bft\.?\b)\s*""", RegexOption.IGNORE_CASE))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+    private fun normalizeSeparators(value: String): String =
+        value.trim()
+            .replace(
+                Regex("""\s*(?:[&＆/、,，])\s*"""),
+                "&"
+            )
+            .replace(Regex("""&{2,}"""), "&")
+            .trim('&', ' ')
 
     private fun sameIdentity(left: String, right: String): Boolean {
         if (left.isBlank() || right.isBlank()) return false

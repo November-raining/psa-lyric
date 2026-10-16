@@ -20,6 +20,16 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         val height: Float
     )
 
+    private data class TimedGlyph(
+        val charIndex: Int,
+        val charCount: Int,
+        val text: String,
+        val rowPrefixWidth: Float,
+        val width: Float,
+        val logicalStartX: Float,
+        val logicalEndX: Float
+    )
+
     private data class TimedSegment(
         val wordIndex: Int,
         val rowIndex: Int,
@@ -27,7 +37,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         val prefixWidth: Float,
         val width: Float,
         val logicalStartX: Float,
-        val logicalEndX: Float
+        val logicalEndX: Float,
+        val glyphs: List<TimedGlyph>
     )
 
     private data class TimedLineMetrics(
@@ -54,6 +65,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         Spring1D(position = 1f, target = 1f, mass = 1f, stiffness = 180f, damping = 18f)
     }
     private val interludeMotion = AppleInterludeMotion()
+    private val lyricClock = AppleLyricClock()
     private var interludePlaceholderHeight = 0f
 
     private var visual = emptyList<VisualLine>()
@@ -133,12 +145,32 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         drawHeader(canvas, snapshot)
 
         val doc = LyricStore.document
-        val effective = snapshot.estimatedPosition() + Prefs.lyricOffsetMs(context)
-        val idx = doc.currentIndex(effective)
+        val authorityPosition =
+            snapshot.estimatedPosition() + Prefs.lyricOffsetMs(context)
+        val idx = doc.currentIndex(authorityPosition)
         ensureLayout(doc)
-        interludeMotion.update(doc.lines, effective, frameDt, snapshot.playing)
+
+        // md3Music P0 timing model: line selection/interlude stay locked to the
+        // authoritative media position, while word mask/lift/emphasis advance on
+        // every Choreographer frame and softly correct to that authority.
+        val wordAnimationPosition = lyricClock.update(
+            authorityMs = authorityPosition,
+            playing = snapshot.playing,
+            dtSeconds = frameDt
+        )
+        interludeMotion.update(
+            doc.lines,
+            authorityPosition,
+            frameDt,
+            snapshot.playing
+        )
         updateCurrent(idx, doc)
-        drawLyrics(canvas, doc, effective)
+        drawLyrics(
+            canvas,
+            doc,
+            wordAnimationPosition,
+            authorityPosition
+        )
         drawControls(canvas, snapshot)
     }
 
@@ -172,7 +204,11 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         canvas.drawText(if (s.title.isBlank()) "等待播放器…" else s.title, left, 40f * scale, metaPaint)
         metaPaint.textSize = 14f * scale
         metaPaint.alpha = 170
-        canvas.drawText(s.artist, left, 64f * scale, metaPaint)
+        val displayArtist = ArtistSelection.chooseResolved(
+            s.artist,
+            LyricStore.document.resolvedArtist
+        )
+        canvas.drawText(displayArtist, left, 64f * scale, metaPaint)
 
         s.artwork?.let { art ->
             val size = 78f * scale
@@ -180,6 +216,15 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             val path = Path().apply { addRoundRect(dst, 10f * scale, 10f * scale, Path.Direction.CW) }
             canvas.save()
             canvas.clipPath(path)
+            // shapePaint is also used for the dark background veil. Reset every
+            // visual attribute before drawing the thumbnail so the veil's 0x60
+            // alpha/color cannot wash the album artwork grey.
+            shapePaint.style = Paint.Style.FILL
+            shapePaint.alpha = 255
+            shapePaint.color = Color.WHITE
+            shapePaint.shader = null
+            shapePaint.colorFilter = null
+            shapePaint.maskFilter = null
             canvas.drawBitmap(art, null, dst, shapePaint)
             canvas.restore()
         }
@@ -221,6 +266,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         cascadePosY = scroll.position
         interludePlaceholderHeight = font * 1.08f
         interludeMotion.reset()
+        lyricClock.reset()
         glowThresholdMs = resolveGlowThreshold(doc)
     }
 
@@ -389,7 +435,12 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         } else base
     }
 
-    private fun drawLyrics(canvas: Canvas, doc: LyricDocument, positionMs: Long) {
+    private fun drawLyrics(
+        canvas: Canvas,
+        doc: LyricDocument,
+        wordPositionMs: Long,
+        authorityPositionMs: Long
+    ) {
         if (visual.isEmpty()) {
             configureTextPaint(designFontPx())
             textPaint.color = Color.WHITE
@@ -440,7 +491,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             var y = v.top + flowOffset + scroll.position + cascade + font
             val timedDrawn = if (active && line.words.isNotEmpty()) {
                 val motion = wordMotions.getOrPut(v.index) { AppleWordMotion() }
-                motion.tick(line, positionMs, AppleMotion.ACTIVE_SCALE, true, frameDt)
+                motion.tick(line, wordPositionMs, AppleMotion.ACTIVE_SCALE, true, frameDt)
                 drawTimedRows(
                     canvas = canvas,
                     visualLine = v,
@@ -451,7 +502,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
                     font = font,
                     cascade = cascade,
                     flowOffset = flowOffset,
-                    lineScale = AppleMotion.ACTIVE_SCALE
+                    lineScale = AppleMotion.ACTIVE_SCALE,
+                    positionMs = wordPositionMs
                 )
             } else false
 
@@ -479,7 +531,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             canvas.restore()
         }
 
-        drawInterludeDots(canvas, doc, positionMs, font, accent)
+        drawInterludeDots(canvas, doc, authorityPositionMs, font, accent)
     }
 
     private fun drawInterludeDots(
@@ -537,7 +589,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         font: Float,
         cascade: Float,
         flowOffset: Float,
-        lineScale: Float
+        lineScale: Float,
+        positionMs: Long
     ): Boolean {
         val metrics = timedLineMetrics.getOrPut(visualLine.index) {
             buildTimedLineMetrics(visualLine, line, font)
@@ -552,7 +605,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         for (rowIndex in rows.indices) {
             rowStarts[rowIndex] = rowX(rows[rowIndex], line, textPaint)
             rowBaselines[rowIndex] =
-                visualLine.top + flowOffset + scroll.position + cascade + font + rowIndex * rowHeight
+                visualLine.top + flowOffset + scroll.position + cascade +
+                    font + rowIndex * rowHeight
         }
 
         val bright = AppleWordMotion.dynamicBright(lineScale)
@@ -570,85 +624,174 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         for (segment in metrics.segments) {
             if (segment.rowIndex !in rowStarts.indices) continue
             val wordIndex = segment.wordIndex
-            val x = rowStarts[segment.rowIndex] + segment.prefixWidth
-            val y = rowBaselines[segment.rowIndex] +
+            val word = line.words.getOrNull(wordIndex) ?: continue
+            val baseY = rowBaselines[segment.rowIndex] +
                 motion.liftAt(wordIndex) * height / 700f
+            val uniformAlpha = motion.alphaAt(wordIndex)
 
-            val leftAlpha: Float
-            val rightAlpha: Float
-            if (useGradient) {
-                leftAlpha = AppleWordMask.alphaAtX(
-                    segment.logicalStartX,
-                    transitionStart,
-                    transitionSpan,
-                    bright,
-                    dark
-                )
-                rightAlpha = AppleWordMask.alphaAtX(
-                    segment.logicalEndX,
-                    transitionStart,
-                    transitionSpan,
-                    bright,
-                    dark
-                )
+            val canWave =
+                Prefs.glow(context) &&
+                    metrics.emphasizeFlags.getOrElse(wordIndex) { false } &&
+                    segment.glyphs.isNotEmpty()
+
+            val states = if (canWave) {
+                segment.glyphs.map { glyph ->
+                    AppleEmphasizeMotion.state(
+                        word = word,
+                        positionMs = positionMs,
+                        charIndex = glyph.charIndex,
+                        charCount = glyph.charCount,
+                        isLastWord = wordIndex == line.words.lastIndex
+                    )
+                }
             } else {
-                val uniform = motion.alphaAt(wordIndex)
-                leftAlpha = uniform
-                rightAlpha = uniform
+                emptyList()
+            }
+            val waveActive = states.any { !it.isIdle }
+
+            if (!waveActive) {
+                val x = rowStarts[segment.rowIndex] + segment.prefixWidth
+                drawTimedPiece(
+                    canvas = canvas,
+                    text = segment.text,
+                    x = x,
+                    y = baseY,
+                    width = segment.width,
+                    logicalStartX = segment.logicalStartX,
+                    logicalEndX = segment.logicalEndX,
+                    useGradient = useGradient,
+                    transitionStart = transitionStart,
+                    transitionSpan = transitionSpan,
+                    bright = bright,
+                    dark = dark,
+                    uniformAlpha = uniformAlpha,
+                    edge = edge,
+                    accent = accent,
+                    font = font
+                )
+                continue
             }
 
-            val finalLeft = (leftAlpha * edge).coerceIn(0f, 1f)
-            val finalRight = (rightAlpha * edge).coerceIn(0f, 1f)
-            val emphasize = Prefs.glow(context) &&
-                wordIndex == motion.currentWordIndex &&
-                metrics.emphasizeFlags.getOrElse(wordIndex) { false }
-            val glowProgress = if (emphasize) {
-                kotlin.math.sin(Math.PI * motion.intraWordProgress.toDouble())
-                    .toFloat().coerceAtLeast(0f)
-            } else 0f
+            // md3Music/AMLL long-syllable emphasis: draw the active word per glyph.
+            // The line-level mask still supplies the subtle left->right sweep; each
+            // glyph additionally gets a staggered scale/float/glow transform.
+            for ((glyphIndex, glyph) in segment.glyphs.withIndex()) {
+                val state = states[glyphIndex]
+                val x = rowStarts[segment.rowIndex] + glyph.rowPrefixWidth +
+                    state.offsetXEm * font
+                val y = baseY + (state.offsetYEm + state.floatYEm) * font
+                val pivotX = x + glyph.width / 2f
+                val pivotY = y - font * 0.42f
 
-            textPaint.textSize = font
-            textPaint.maskFilter = null
-            if (glowProgress > 0.001f) {
-                textPaint.setShadowLayer(
-                    font * 0.24f * glowProgress,
-                    0f,
-                    0f,
-                    withAlpha(accent, (190f * glowProgress).toInt())
+                canvas.save()
+                if (abs(state.scale - 1f) > 0.0001f) {
+                    canvas.scale(state.scale, state.scale, pivotX, pivotY)
+                }
+
+                val glowAlpha = (205f * state.glowLevel)
+                    .toInt().coerceIn(0, 235)
+                val shadowRadius = state.shadowBlurEm * font
+                if (glowAlpha > 0 && shadowRadius > 0.05f) {
+                    textPaint.setShadowLayer(
+                        shadowRadius,
+                        0f,
+                        0f,
+                        withAlpha(accent, glowAlpha)
+                    )
+                } else {
+                    textPaint.clearShadowLayer()
+                }
+
+                drawTimedPiece(
+                    canvas = canvas,
+                    text = glyph.text,
+                    x = x,
+                    y = y,
+                    width = glyph.width,
+                    logicalStartX = glyph.logicalStartX,
+                    logicalEndX = glyph.logicalEndX,
+                    useGradient = useGradient,
+                    transitionStart = transitionStart,
+                    transitionSpan = transitionSpan,
+                    bright = bright,
+                    dark = dark,
+                    uniformAlpha = uniformAlpha,
+                    edge = edge,
+                    accent = accent,
+                    font = font
                 )
-            } else {
                 textPaint.clearShadowLayer()
+                canvas.restore()
             }
-
-            if (kotlin.math.abs(finalLeft - finalRight) < 0.01f || segment.width <= 0.5f) {
-                textPaint.shader = null
-                textPaint.color = accent
-                textPaint.alpha = (255f * ((finalLeft + finalRight) * 0.5f))
-                    .toInt().coerceIn(0, 255)
-            } else {
-                // md3Music WordRenderer: the moving boundary is a line-level mask,
-                // then each glyph segment samples the bright->dark alpha at its
-                // left/right edges. This is the subtle sweep missing from the old
-                // "whole word lights up" implementation.
-                textPaint.alpha = 255
-                textPaint.color = Color.WHITE
-                textPaint.shader = LinearGradient(
-                    x,
-                    y - font,
-                    x + segment.width.coerceAtLeast(1f),
-                    y - font,
-                    withAlpha(accent, (255f * finalLeft).toInt()),
-                    withAlpha(accent, (255f * finalRight).toInt()),
-                    Shader.TileMode.CLAMP
-                )
-            }
-            canvas.drawText(segment.text, x, y, textPaint)
-            textPaint.shader = null
         }
 
         textPaint.clearShadowLayer()
         textPaint.shader = null
         return true
+    }
+
+    private fun drawTimedPiece(
+        canvas: Canvas,
+        text: String,
+        x: Float,
+        y: Float,
+        width: Float,
+        logicalStartX: Float,
+        logicalEndX: Float,
+        useGradient: Boolean,
+        transitionStart: Float,
+        transitionSpan: Float,
+        bright: Float,
+        dark: Float,
+        uniformAlpha: Float,
+        edge: Float,
+        accent: Int,
+        font: Float
+    ) {
+        val leftAlpha = if (useGradient) {
+            AppleWordMask.alphaAtX(
+                logicalStartX,
+                transitionStart,
+                transitionSpan,
+                bright,
+                dark
+            )
+        } else uniformAlpha
+        val rightAlpha = if (useGradient) {
+            AppleWordMask.alphaAtX(
+                logicalEndX,
+                transitionStart,
+                transitionSpan,
+                bright,
+                dark
+            )
+        } else uniformAlpha
+
+        val finalLeft = (leftAlpha * edge).coerceIn(0f, 1f)
+        val finalRight = (rightAlpha * edge).coerceIn(0f, 1f)
+
+        textPaint.textSize = font
+        textPaint.maskFilter = null
+        if (abs(finalLeft - finalRight) < 0.01f || width <= 0.5f) {
+            textPaint.shader = null
+            textPaint.color = accent
+            textPaint.alpha = (255f * ((finalLeft + finalRight) * 0.5f))
+                .toInt().coerceIn(0, 255)
+        } else {
+            textPaint.alpha = 255
+            textPaint.color = Color.WHITE
+            textPaint.shader = LinearGradient(
+                x,
+                y - font,
+                x + width.coerceAtLeast(1f),
+                y - font,
+                withAlpha(accent, (255f * finalLeft).toInt()),
+                withAlpha(accent, (255f * finalRight).toInt()),
+                Shader.TileMode.CLAMP
+            )
+        }
+        canvas.drawText(text, x, y, textPaint)
+        textPaint.shader = null
     }
 
     private fun buildTimedLineMetrics(
@@ -675,37 +818,76 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             shouldEmphasize(line, line.words[i])
         }
 
-        data class RowRange(val start: Int, val end: Int, val text: String)
+        data class RowRange(val start: Int, val end: Int)
         val rowRanges = ArrayList<RowRange>(visualLine.rows.size)
         var searchFrom = 0
         for (row in visualLine.rows) {
             var rowStart = source.indexOf(row, searchFrom)
             if (rowStart < 0) rowStart = searchFrom
             val rowEnd = (rowStart + row.length).coerceAtMost(source.length)
-            rowRanges += RowRange(rowStart, rowEnd, source.substring(rowStart, rowEnd))
+            rowRanges += RowRange(rowStart, rowEnd)
             searchFrom = rowEnd
         }
 
         val segments = ArrayList<TimedSegment>(line.words.size + 2)
         var wordCharStart = 0
         for ((wordIndex, word) in line.words.withIndex()) {
-            val wordCharEnd = (wordCharStart + word.text.length).coerceAtMost(source.length)
+            val wordCharEnd =
+                (wordCharStart + word.text.length).coerceAtMost(source.length)
             if (wordCharEnd <= wordCharStart) {
                 wordCharStart = wordCharEnd
                 continue
             }
+
+            val charBounds = codePointBoundaries(word.text)
+            val charCount = (charBounds.size - 1).coerceAtLeast(0)
+
             for ((rowIndex, row) in rowRanges.withIndex()) {
                 val a = max(wordCharStart, row.start)
                 val b = min(wordCharEnd, row.end)
                 if (b <= a) continue
+
                 val prefix = source.substring(row.start, a)
                 val segmentText = source.substring(a, b)
-                val localWordStart = (a - wordCharStart).coerceAtLeast(0)
-                val logicalPrefix = if (localWordStart > 0) {
-                    textPaint.measureText(word.text.substring(0, localWordStart))
+                val localSegmentStart = (a - wordCharStart).coerceAtLeast(0)
+                val logicalPrefix = if (localSegmentStart > 0) {
+                    textPaint.measureText(
+                        word.text.substring(0, localSegmentStart)
+                    )
                 } else 0f
                 val segmentWidth = textPaint.measureText(segmentText)
                 val logicalStart = mask.wordStarts[wordIndex] + logicalPrefix
+
+                val glyphs = ArrayList<TimedGlyph>(charCount)
+                for (charIndex in 0 until charCount) {
+                    val localStart = charBounds[charIndex]
+                    val localEnd = charBounds[charIndex + 1]
+                    val absoluteStart = wordCharStart + localStart
+                    val absoluteEnd = wordCharStart + localEnd
+                    if (absoluteStart < a || absoluteEnd > b) continue
+
+                    val glyphText = word.text.substring(localStart, localEnd)
+                    val withinRowPrefix =
+                        source.substring(row.start, absoluteStart)
+                    val glyphWidth = textPaint.measureText(glyphText)
+                    val glyphLogicalStart = mask.wordStarts[wordIndex] +
+                        if (localStart > 0) {
+                            textPaint.measureText(
+                                word.text.substring(0, localStart)
+                            )
+                        } else 0f
+
+                    glyphs += TimedGlyph(
+                        charIndex = charIndex,
+                        charCount = charCount,
+                        text = glyphText,
+                        rowPrefixWidth = textPaint.measureText(withinRowPrefix),
+                        width = glyphWidth,
+                        logicalStartX = glyphLogicalStart,
+                        logicalEndX = glyphLogicalStart + glyphWidth
+                    )
+                }
+
                 segments += TimedSegment(
                     wordIndex = wordIndex,
                     rowIndex = rowIndex,
@@ -713,7 +895,8 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
                     prefixWidth = textPaint.measureText(prefix),
                     width = segmentWidth,
                     logicalStartX = logicalStart,
-                    logicalEndX = logicalStart + segmentWidth
+                    logicalEndX = logicalStart + segmentWidth,
+                    glyphs = glyphs
                 )
             }
             wordCharStart = wordCharEnd

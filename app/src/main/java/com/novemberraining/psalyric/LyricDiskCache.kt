@@ -91,7 +91,8 @@ object LyricDiskCache {
             val origin = root.optString("source").ifBlank { "未知来源" }
             LyricDocument(
                 lines = DuetLayout.process(lines.sortedBy { it.startMs }),
-                source = "本地缓存 · $origin"
+                source = "本地缓存 · $origin",
+                resolvedArtist = root.optString("resolvedArtist")
             )
         } catch (_: Throwable) {
             // A partial/corrupt cache entry should never block online lookup.
@@ -117,6 +118,7 @@ object LyricDiskCache {
             .put("artist", query.artist)
             .put("durationMs", query.durationMs)
             .put("source", document.source)
+            .put("resolvedArtist", document.resolvedArtist)
             .put("savedAt", System.currentTimeMillis())
 
         val lines = JSONArray()

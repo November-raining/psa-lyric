@@ -67,7 +67,8 @@ object LyricsEngine {
             key == lastKey &&
             lastSecondarySignature == secondarySignature &&
             currentDocument.lines.isNotEmpty() &&
-            documentSatisfiesSecondary(context, currentDocument)
+            documentSatisfiesSecondary(context, currentDocument) &&
+            !artistNeedsEnrichment(snapshot, currentDocument)
         ) return
         if (
             key == lastKey &&
@@ -93,7 +94,8 @@ object LyricsEngine {
                 LyricStore.document = cached
                 if (
                     documentSatisfiesSecondary(context, cached) &&
-                    !duetNeedsEnrichment(context, snapshot.artist, cached)
+                    !duetNeedsEnrichment(context, snapshot.artist, cached) &&
+                    !artistNeedsEnrichment(snapshot, cached)
                 ) {
                     diagnostics = diagnosticFor(
                         key = key,
@@ -135,7 +137,8 @@ object LyricsEngine {
             LyricStore.document = localDocument
             if (
                 documentSatisfiesSecondary(context, localDocument) &&
-                !duetNeedsEnrichment(context, query.artist, localDocument)
+                !duetNeedsEnrichment(context, query.artist, localDocument) &&
+                !artistNeedsEnrichment(PlaybackStore.snapshot, localDocument)
             ) {
                 finishMatch(context, key, localDocument, "matched-word", status, startedAt)
                 return
@@ -367,8 +370,17 @@ object LyricsEngine {
         document: LyricDocument
     ): Boolean =
         Prefs.duet(context) &&
-            ArtistSelection.looksCollaborative(artist.orEmpty()) &&
+            ArtistSelection.looksCollaborative(
+                document.resolvedArtist.ifBlank { artist.orEmpty() }
+            ) &&
             !DuetRoleEnricher.hasSplit(document)
+
+    private fun artistNeedsEnrichment(
+        snapshot: PlaybackSnapshot,
+        document: LyricDocument
+    ): Boolean =
+        snapshot.packageName == "com.tencent.qqmusiccar" &&
+            document.resolvedArtist.isBlank()
 
     private fun secondarySignature(context: Context): String =
         if (!Prefs.secondaryLyricEnabled(context)) {
