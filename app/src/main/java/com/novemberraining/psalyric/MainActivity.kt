@@ -71,7 +71,7 @@ class MainActivity : Activity() {
         button(if (ForegroundAppDetector.hasUsageAccess(this)) "使用情况访问：已授权" else "授权使用情况访问") {
             startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
         }
-        button("授权本地歌词目录读取") {
+        button("授权额外外部歌词目录读取") {
             requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), REQ_STORAGE)
         }
 
@@ -137,15 +137,26 @@ class MainActivity : Activity() {
         seek("全局歌词校准", -3000, 3000, Prefs.lyricOffsetMs(this).toInt(), " ms") {
             Prefs.setLyricOffsetMs(this, it.toLong())
         }
+
+        val cacheStats = LyricDiskCache.stats(this)
+        note(
+            "自动本地缓存：默认启用，无需存储权限。\n" +
+                "路径：${LyricDiskCache.directory(this).absolutePath}\n" +
+                "当前：${cacheStats.entries} 首 / " +
+                String.format(java.util.Locale.ROOT, "%.2f MB", cacheStats.megabytes) +
+                "；上限 300 首 / 32 MB，超限按最久未使用自动清理到 240 首 / 24 MB。\n" +
+                "任何成功匹配的逐字/逐行歌词都会自动保存；切歌再回来优先直接读本地缓存。"
+        )
+
         val path = EditText(this).apply {
-            hint = "本地歌词目录，例如 /sdcard/Lyrics"
+            hint = "额外外部歌词目录（可选），例如 /sdcard/Lyrics"
             setText(Prefs.localLyricDir(this@MainActivity))
             setTextColor(Color.WHITE)
             setHintTextColor(0xFF718096.toInt())
         }
         root.addView(path, LinearLayout.LayoutParams(-1, dp(52)))
-        button("保存本地歌词目录") { Prefs.setLocalLyricDir(this, path.text.toString()) }
-        note("优先级：本地逐字 → QQ QRC（优先窗口）→ 酷狗 KRC / 网易云 YRC 并发备份；都没有逐字时才回退 LRC。在线逐字通道短超时、单次尝试。")
+        button("保存额外外部歌词目录") { Prefs.setLocalLyricDir(this, path.text.toString()) }
+        note("优先级：自动本地缓存 / 外部本地逐字 → QQ QRC（优先窗口）→ 酷狗 KRC / 网易云 YRC 并发备份；都没有逐字时才回退 LRC。")
 
         section("诊断")
         diagnosticView = note("")
