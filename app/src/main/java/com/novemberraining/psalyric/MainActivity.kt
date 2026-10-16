@@ -249,6 +249,13 @@ class MainActivity : Activity() {
             append(" lines=").append(lyric.lineCount)
                 .append(" words=").append(lyric.wordCount)
             val currentDoc = LyricStore.document
+            val duetLeft = currentDoc.lines.count { it.alignment == DuetAlignment.LEFT }
+            val duetRight = currentDoc.lines.count { it.alignment == DuetAlignment.RIGHT }
+            val duetCenter = currentDoc.lines.count { it.alignment == DuetAlignment.CENTER }
+            append("\n对唱布局：左=").append(duetLeft)
+                .append(" 右=").append(duetRight)
+                .append(" 中=").append(duetCenter)
+                .append(" 开关=").append(if (Prefs.duet(this@MainActivity)) "ON" else "OFF")
             append("\n副行数据：翻译=").append(lyric.translationLineCount)
                 .append("/").append(lyric.lineCount)
                 .append(" 罗马音=").append(lyric.romajiLineCount)
