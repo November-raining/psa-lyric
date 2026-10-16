@@ -27,9 +27,47 @@ data class PlaybackSnapshot(
     }
 }
 
+data class MediaDiagnostics(
+    val activeSessionCount: Int = 0,
+    val selectedPackage: String = "",
+    val selectedTitle: String = "",
+    val selectedState: Int = PlaybackState.STATE_NONE,
+    val reason: String = "waiting",
+    val updatedElapsedMs: Long = 0L
+)
+
 object PlaybackStore {
     @Volatile var snapshot: PlaybackSnapshot = PlaybackSnapshot()
     @Volatile var controller: MediaController? = null
+    @Volatile var diagnostics: MediaDiagnostics = MediaDiagnostics()
+
+    fun publish(
+        selectedController: MediaController?,
+        selectedSnapshot: PlaybackSnapshot,
+        activeSessionCount: Int,
+        reason: String
+    ) {
+        controller = selectedController
+        snapshot = selectedSnapshot
+        diagnostics = MediaDiagnostics(
+            activeSessionCount = activeSessionCount,
+            selectedPackage = selectedSnapshot.packageName,
+            selectedTitle = selectedSnapshot.title,
+            selectedState = selectedSnapshot.state,
+            reason = reason,
+            updatedElapsedMs = SystemClock.elapsedRealtime()
+        )
+    }
+
+    fun clear(activeSessionCount: Int, reason: String) {
+        controller = null
+        snapshot = PlaybackSnapshot()
+        diagnostics = MediaDiagnostics(
+            activeSessionCount = activeSessionCount,
+            reason = reason,
+            updatedElapsedMs = SystemClock.elapsedRealtime()
+        )
+    }
 
     fun playPause() {
         val c = controller ?: return
