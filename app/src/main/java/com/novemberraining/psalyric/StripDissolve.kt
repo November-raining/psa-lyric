@@ -16,28 +16,48 @@ class StripDissolve {
 
     private var previous = ""
     private var startedAtMs = 0L
+    private var frozenAtMs = -1L
     private val emitted = HashSet<Int>()
     private val particles = ArrayList<Particle>()
 
     val previousText: String get() = previous
-    fun active(nowMs: Long): Boolean = previous.isNotEmpty() && nowMs - startedAtMs < DURATION_MS + DUST_LIFE_MS
+    fun active(nowMs: Long): Boolean =
+        previous.isNotEmpty() && clock(nowMs) - startedAtMs < DURATION_MS + DUST_LIFE_MS
 
     fun begin(text: String, nowMs: Long) {
         previous = text
         startedAtMs = nowMs
         emitted.clear()
         particles.clear()
+        frozenAtMs = -1L
     }
+
+    fun setFrozen(frozen: Boolean, nowMs: Long) {
+        if (frozen) {
+            if (frozenAtMs < 0L) frozenAtMs = nowMs
+        } else if (frozenAtMs >= 0L) {
+            val delta = nowMs - frozenAtMs
+            startedAtMs += delta
+            for (i in particles.indices) {
+                val p = particles[i]
+                particles[i] = p.copy(bornMs = p.bornMs + delta)
+            }
+            frozenAtMs = -1L
+        }
+    }
+
+    private fun clock(nowMs: Long): Long = if (frozenAtMs >= 0L) frozenAtMs else nowMs
 
     fun clear() {
         previous = ""
         emitted.clear()
         particles.clear()
+        frozenAtMs = -1L
     }
 
     fun characterAlpha(index: Int, count: Int, nowMs: Long): Float {
         if (previous.isEmpty() || count <= 0) return 0f
-        val p = ((nowMs - startedAtMs).toFloat() / DURATION_MS).coerceIn(0f, 1f)
+        val p = ((clock(nowMs) - startedAtMs).toFloat() / DURATION_MS).coerceIn(0f, 1f)
         val step = 1f / (count + OVERLAP - 1f)
         val fade = OVERLAP * step
         val local = ((p - index * step) / fade).coerceIn(0f, 1f)
@@ -94,12 +114,13 @@ class StripDissolve {
     }
 
     fun liveParticles(nowMs: Long): List<Particle> {
-        particles.removeAll { nowMs - it.bornMs >= DUST_LIFE_MS }
+        val clock = clock(nowMs)
+        particles.removeAll { clock - it.bornMs >= DUST_LIFE_MS }
         return particles
     }
 
     fun particleProgress(particle: Particle, nowMs: Long): Float =
-        ((nowMs - particle.bornMs).toFloat() / DUST_LIFE_MS).coerceIn(0f, 1f)
+        ((clock(nowMs) - particle.bornMs).toFloat() / DUST_LIFE_MS).coerceIn(0f, 1f)
 
     fun particleX(p: Particle, nowMs: Long): Float {
         val t = particleProgress(p, nowMs)
