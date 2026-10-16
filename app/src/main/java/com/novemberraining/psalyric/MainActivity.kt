@@ -134,13 +134,41 @@ class MainActivity : Activity() {
         toggle("对唱优化", Prefs.duet(this)) { Prefs.setDuet(this, it) }
         toggle("动态歌词颜色", Prefs.dynamicColor(this)) { Prefs.setDynamicColor(this, it) }
         toggle("高斯模糊", Prefs.gaussianBlur(this)) { Prefs.setGaussianBlur(this, it) }
+        seekWithReset(
+            "高斯模糊强度",
+            50,
+            300,
+            Prefs.gaussianBlurStrength(this),
+            "%",
+            resetValue = Prefs.DEFAULT_GAUSSIAN_BLUR_STRENGTH,
+            resetLabel = "重置"
+        ) { Prefs.setGaussianBlurStrength(this, it) }
+        seekWithReset(
+            "远行模糊增幅",
+            0,
+            250,
+            Prefs.gaussianBlurDistanceBoost(this),
+            "%",
+            resetValue = Prefs.DEFAULT_GAUSSIAN_BLUR_DISTANCE_BOOST,
+            resetLabel = "重置"
+        ) { Prefs.setGaussianBlurDistanceBoost(this, it) }
         toggle("光辉效果", Prefs.glow(this)) { Prefs.setGlow(this, it) }
+        seekWithReset(
+            "光辉强度",
+            80,
+            400,
+            Prefs.glowIntensity(this),
+            "",
+            resetValue = Prefs.DEFAULT_GLOW_INTENSITY,
+            resetLabel = "重置"
+        ) { Prefs.setGlowIntensity(this, it) }
         toggle("平衡换行", Prefs.balancedWrap(this)) { Prefs.setBalancedWrap(this, it) }
         note(
-            "动效基线沿用 md3Music / AMLL：当前歌词中心停在窗口高度 35%；非当前行缩到 85%；" +
-                "行缩放弹簧 mass=2 / stiffness=100 / damping=25。滚动弹簧会按相邻歌词间隔在 110–140 之间自动调刚度，" +
-                "阻尼为 √k×2.2。逐字高亮使用行级渐变遮罩而不是整字跳亮；已播字最大上浮约 3 px。" +
-                "拖动浏览后 5 秒回弹；双击歌词行 seek。"
+            "动画主体保持 0.1.11：整 word 上浮 / alpha easing / 原光辉；仅叠加已确认的行级移动渐变遮罩。" +
+                "光辉强度 220 为当前基准，调高后同时增加辉光不透明度与半径。" +
+                "高斯模糊强度 100% 为当前基准；远行模糊增幅 100% 等于原来的按距离线性增加，" +
+                "调高后离当前歌词越远会额外更模糊。当前歌词本身保持清晰。" +
+                "非当前行缩到 85%，已播字最大上浮约 3 px；拖动浏览后 5 秒回弹；双击歌词行 seek。"
         )
 
         section("背景")
