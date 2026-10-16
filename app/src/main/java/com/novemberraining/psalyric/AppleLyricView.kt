@@ -8,6 +8,7 @@ import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
 
@@ -19,11 +20,26 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         val height: Float
     )
 
+    private data class RowSlice(
+        val text: String,
+        val start: Int,
+        val end: Int,
+        val x: Float,
+        val baseline: Float
+    )
+
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val metaPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val shapePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val scroll = Spring1D()
     private val scales = HashMap<Int, Spring1D>()
+    private val wordMotions = HashMap<Int, AppleWordMotion>()
+    private val cascadeSprings = HashMap<Int, Spring1D>()
+    private val cascadeStartTimes = HashMap<Int, Long>()
+    private var cascadePosY = 0f
+    private var frameDt = 1f / 60f
+    private var blurFade = 1f
+    private var glowThresholdMs = 500
     private val buttonScales = Array(3) {
         Spring1D(position = 1f, target = 1f, mass = 1f, stiffness = 180f, damping = 18f)
     }
@@ -74,13 +90,22 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
     }
 
     private fun stepAnimation(dt: Float) {
+        frameDt = dt
         scroll.step(dt)
         scales.values.forEach { it.step(dt) }
+        stepCascade(dt)
         buttonScales.forEach { it.step(dt) }
+
         if (browsing && autoReturnAt > 0L && SystemClock.elapsedRealtime() >= autoReturnAt) {
             browsing = false
             autoReturnAt = 0L
         }
+
+        val blurTarget = if (browsing) 0f else 1f
+        val blurSpeed = if (browsing) 15f else 12f
+        blurFade += (blurTarget - blurFade) *
+            (1f - exp((-blurSpeed * dt).toDouble()).toFloat())
+        if (abs(blurFade - blurTarget) < 0.01f) blurFade = blurTarget
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -150,7 +175,13 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         cachedFont = font
         visual = buildVisual(doc, font)
         firstLayout = true
+        currentIndex = -1
         scales.clear()
+        wordMotions.clear()
+        cascadeSprings.clear()
+        cascadeStartTimes.clear()
+        cascadePosY = scroll.position
+        glowThresholdMs = resolveGlowThreshold(doc)
     }
 
     private fun buildVisual(doc: LyricDocument, font: Float): List<VisualLine> {
@@ -182,6 +213,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         if (currentIndex != index) {
             val old = currentIndex
             currentIndex = index
+            if (old >= 0 && !browsing) startCascade(index)
             scales.getOrPut(index) {
                 Spring1D(
                     position = AppleMotion.INACTIVE_SCALE,
@@ -222,6 +254,81 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         }
     }
 
+    private fun startCascade(index: Int) {
+        val now = SystemClock.elapsedRealtime()
+        val pendingHold = cascadePosY - scroll.position
+        if (abs(pendingHold) > 0.01f) {
+            for ((line, started) in cascadeStartTimes.toMap()) {
+                if (started >= 0L) {
+                    val spring = cascadeSpring(line)
+                    spring.snap(spring.position + pendingHold)
+                    spring.retarget(0f)
+                    cascadeStartTimes[line] = -1L
+                }
+            }
+        }
+
+        cascadePosY = scroll.position
+        val startLine = max(0, index - 5)
+        val endLine = min(visual.size, index + 10)
+        val staggerStart = max(0, index - 1)
+        for (i in startLine until endLine) {
+            cascadeStartTimes[i] = if (i < staggerStart) -1L else now
+        }
+    }
+
+    private fun cascadeSpring(index: Int): Spring1D =
+        cascadeSprings.getOrPut(index) {
+            Spring1D(
+                position = 0f,
+                target = 0f,
+                mass = 1f,
+                stiffness = 100f,
+                damping = 15f
+            )
+        }
+
+    private fun stepCascade(dt: Float) {
+        if (currentIndex < 0 || visual.isEmpty()) return
+        if (browsing) {
+            cascadePosY = scroll.position
+            cascadeStartTimes.replaceAll { _, _ -> -1L }
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        val startLine = max(0, currentIndex - 5)
+        val endLine = min(visual.size, currentIndex + 10)
+        val staggerStart = max(0, currentIndex - 1)
+        var delayMs = 0f
+        var stepMs = 60f
+        val holdOffset = cascadePosY - scroll.position
+
+        for (i in startLine until endLine) {
+            val lineDelay = min(delayMs, 750f)
+            val started = cascadeStartTimes[i]
+            val held = started != null && started >= 0L
+            if (held && now - started!! >= lineDelay) {
+                val spring = cascadeSpring(i)
+                spring.snap(spring.position + holdOffset)
+                spring.retarget(0f)
+                cascadeStartTimes[i] = -1L
+            } else if (!held) {
+                cascadeSprings[i]?.step(dt)
+            }
+
+            if (i >= staggerStart) delayMs += stepMs
+            if (i >= currentIndex) stepMs /= 1.1f
+        }
+    }
+
+    private fun cascadeOffset(index: Int): Float {
+        val base = cascadeSprings[index]?.position ?: 0f
+        val started = cascadeStartTimes[index]
+        return if (!browsing && started != null && started >= 0L) {
+            base + (cascadePosY - scroll.position)
+        } else base
+    }
+
     private fun drawLyrics(canvas: Canvas, doc: LyricDocument, positionMs: Long) {
         if (visual.isEmpty()) {
             configureTextPaint(designFontPx())
@@ -232,16 +339,19 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         }
         val font = designFontPx()
         configureTextPaint(font)
-        val accent = if (Prefs.dynamicColor(context)) blendWhite(ArtworkBackdrop.accent, 0.30f) else Color.WHITE
+        val accent = if (Prefs.dynamicColor(context)) {
+            blendWhite(ArtworkBackdrop.accent, 0.30f)
+        } else Color.WHITE
 
         for (v in visual) {
-            val centerY = v.top + v.height / 2f + scroll.position
+            val cascade = cascadeOffset(v.index)
+            val centerY = v.top + v.height / 2f + scroll.position + cascade
             if (centerY < lyricTop - 90f || centerY > lyricBottom + 90f) continue
             val line = doc.lines[v.index]
             val dist = abs(v.index - currentIndex)
             val active = v.index == currentIndex
             val scale = scales[v.index]?.position ?: if (active) 1f else AppleMotion.INACTIVE_SCALE
-            val alpha = if (active) 1f else max(0.16f, 0.48f - (dist - 1).coerceAtLeast(0) * 0.055f)
+            val alpha = if (active) 1f else 0.20f
             val edge = edgeFade(centerY)
             val drawAlpha = (255 * alpha * edge).toInt().coerceIn(0, 255)
             val pivotX = when (if (Prefs.duet(context)) line.alignment else DuetAlignment.LEFT) {
@@ -252,47 +362,189 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
 
             canvas.save()
             canvas.scale(scale, scale, pivotX, centerY)
-            if (!active && Prefs.gaussianBlur(context) && !browsing) {
-                textPaint.maskFilter = BlurMaskFilter(dist.coerceIn(1, 5) * 0.85f * height / 700f, BlurMaskFilter.Blur.NORMAL)
-            } else textPaint.maskFilter = null
+            val blurRadius = dist.coerceIn(1, 5) * 0.85f * (height / 700f) * blurFade
+            textPaint.maskFilter = if (!active && Prefs.gaussianBlur(context) && blurRadius > 0.05f) {
+                BlurMaskFilter(blurRadius, BlurMaskFilter.Blur.NORMAL)
+            } else null
 
             textPaint.color = if (active) accent else Color.WHITE
             textPaint.alpha = drawAlpha
-            if (active && Prefs.glow(context)) {
-                textPaint.setShadowLayer(8f * height / 700f, 0f, 0f, accent)
-            } else textPaint.clearShadowLayer()
+            if (active && line.words.isEmpty() && Prefs.glow(context)) {
+                textPaint.setShadowLayer(5f * height / 700f, 0f, 0f, accent)
+            } else {
+                textPaint.clearShadowLayer()
+            }
 
             val rowHeight = font * 1.08f
-            var y = v.top + scroll.position + font
-            for ((rowIndex, row) in v.rows.withIndex()) {
-                val x = rowX(row, line, textPaint)
-                if (active && line.words.isNotEmpty()) {
-                    textPaint.alpha = (drawAlpha * 0.22f).toInt()
+            var y = v.top + scroll.position + cascade + font
+            val timedDrawn = if (active && line.words.isNotEmpty()) {
+                val motion = wordMotions.getOrPut(v.index) { AppleWordMotion() }
+                motion.tick(line, positionMs, scale, true, frameDt)
+                drawTimedRows(
+                    canvas = canvas,
+                    visualLine = v,
+                    line = line,
+                    motion = motion,
+                    edge = edge,
+                    accent = accent,
+                    font = font,
+                    cascade = cascade
+                )
+            } else false
+
+            if (!timedDrawn) {
+                for (row in v.rows) {
+                    val x = rowX(row, line, textPaint)
                     canvas.drawText(row, x, y, textPaint)
-                    val ratio = timedProgress(line, positionMs)
-                    canvas.save()
-                    canvas.clipRect(x, y - font * 1.05f, x + textPaint.measureText(row) * ratio, y + font * 0.25f)
-                    textPaint.alpha = drawAlpha
-                    canvas.drawText(row, x, y - 3f * height / 700f * ratio, textPaint)
-                    canvas.restore()
-                } else {
-                    canvas.drawText(row, x, y, textPaint)
+                    y += rowHeight
                 }
-                y += rowHeight
+            } else {
+                y += v.rows.size * rowHeight
             }
+
             textPaint.clearShadowLayer()
             textPaint.maskFilter = null
 
-            val sub = line.translation.ifBlank { line.romaji }
+            val sub = if (active) line.translation.ifBlank { line.romaji } else ""
             if (sub.isNotBlank()) {
                 textPaint.textSize = font * 0.58f
-                textPaint.alpha = (drawAlpha * if (active) 0.76f else 0.5f).toInt()
+                textPaint.alpha = (255 * edge * 0.76f).toInt().coerceIn(0, 255)
+                textPaint.color = accent
                 val x = rowX(sub, line, textPaint)
                 canvas.drawText(sub, x, y + font * 0.12f, textPaint)
             }
             canvas.restore()
         }
     }
+
+    private fun drawTimedRows(
+        canvas: Canvas,
+        visualLine: VisualLine,
+        line: LyricLine,
+        motion: AppleWordMotion,
+        edge: Float,
+        accent: Int,
+        font: Float,
+        cascade: Float
+    ): Boolean {
+        val source = line.words.joinToString(separator = "") { it.text }
+        if (source.isBlank()) return false
+        val maxWidth = width - 44f * height / 700f
+        val rows = if (source == line.text) {
+            visualLine.rows
+        } else if (Prefs.balancedWrap(context)) {
+            balancedRows(source, maxWidth)
+        } else {
+            greedyRows(source, maxWidth)
+        }
+        if (rows.isEmpty()) return false
+
+        val rowHeight = font * 1.08f
+        val slices = ArrayList<RowSlice>(rows.size)
+        var searchFrom = 0
+        for ((rowIndex, row) in rows.withIndex()) {
+            var rowStart = source.indexOf(row, searchFrom)
+            if (rowStart < 0) rowStart = searchFrom
+            val rowEnd = (rowStart + row.length).coerceAtMost(source.length)
+            val baseline = visualLine.top + scroll.position + cascade + font + rowIndex * rowHeight
+            slices += RowSlice(
+                text = source.substring(rowStart, rowEnd),
+                start = rowStart,
+                end = rowEnd,
+                x = rowX(source.substring(rowStart, rowEnd), line, textPaint),
+                baseline = baseline
+            )
+            searchFrom = rowEnd
+        }
+
+        var wordStart = 0
+        for ((wordIndex, word) in line.words.withIndex()) {
+            val wordEnd = (wordStart + word.text.length).coerceAtMost(source.length)
+            if (wordEnd <= wordStart) continue
+
+            val alpha = (255f * edge * motion.alphaAt(wordIndex)).toInt().coerceIn(0, 255)
+            val lift = motion.liftAt(wordIndex) * height / 700f
+            val emphasize = Prefs.glow(context) &&
+                wordIndex == motion.currentWordIndex &&
+                shouldEmphasize(line, word)
+            val glowProgress = if (emphasize) {
+                kotlin.math.sin(Math.PI * motion.intraWordProgress.toDouble())
+                    .toFloat().coerceAtLeast(0f)
+            } else 0f
+
+            for (row in slices) {
+                val a = max(wordStart, row.start)
+                val b = min(wordEnd, row.end)
+                if (b <= a) continue
+                val prefix = source.substring(row.start, a)
+                val segment = source.substring(a, b)
+                val x = row.x + textPaint.measureText(prefix)
+                textPaint.textSize = font
+                textPaint.typeface = Typeface.create(Typeface.DEFAULT, Prefs.fontWeight(context), false)
+                textPaint.color = accent
+                textPaint.alpha = alpha
+                if (glowProgress > 0.001f) {
+                    textPaint.setShadowLayer(
+                        font * 0.24f * glowProgress,
+                        0f,
+                        0f,
+                        withAlpha(accent, (220f * glowProgress).toInt())
+                    )
+                } else {
+                    textPaint.clearShadowLayer()
+                }
+                canvas.drawText(segment, x, row.baseline + lift, textPaint)
+            }
+            wordStart = wordEnd
+        }
+        textPaint.clearShadowLayer()
+        return true
+    }
+
+    private fun resolveGlowThreshold(doc: LyricDocument): Int {
+        val durations = doc.lines.asSequence()
+            .flatMap { it.words.asSequence() }
+            .map { it.durationMs.toInt() }
+            .filter { it > 0 }
+            .toMutableList()
+        if (durations.size < 20) return 500
+        durations.sort()
+        return (durations[durations.size / 2] * 1.4f).toInt().coerceAtLeast(1)
+    }
+
+    private fun shouldEmphasize(line: LyricLine, word: WordTiming): Boolean {
+        if (word.durationMs < glowThresholdMs || word.text.isBlank()) return false
+        val metadata = arrayOf(
+            "作词", "作曲", "词：", "词:", "曲：", "曲:", "编曲", "制作人",
+            "混音", "录音", "母带", "出品", "监制", "演唱", "原唱", "翻唱"
+        )
+        val trimmedLine = line.text.trim()
+        if (metadata.any { trimmedLine.startsWith(it) }) return false
+
+        var hasLetterOrNumber = false
+        var hasCjk = false
+        var count = 0
+        var i = 0
+        while (i < word.text.length) {
+            val cp = Character.codePointAt(word.text, i)
+            if (Character.isLetterOrDigit(cp)) hasLetterOrNumber = true
+            if ((cp in 0x4E00..0x9FFF) || (cp in 0x3040..0x30FF) ||
+                (cp in 0x3000..0x303F) || (cp in 0xAC00..0xD7AF)) {
+                hasCjk = true
+            }
+            count++
+            i += Character.charCount(cp)
+        }
+        return hasLetterOrNumber && (hasCjk || count in 1..7)
+    }
+
+    private fun withAlpha(color: Int, alpha: Int): Int =
+        Color.argb(
+            alpha.coerceIn(0, 255),
+            Color.red(color),
+            Color.green(color),
+            Color.blue(color)
+        )
 
     private fun drawControls(canvas: Canvas, s: PlaybackSnapshot) {
         val scale = height / 700f
@@ -360,7 +612,11 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
                     val dy = event.y - lastY
                     if (abs(event.y - downY) > 8f) browsing = true
                     if (browsing) {
+                        cascadeStartTimes.clear()
+                        cascadeSprings.clear()
+                        cascadePosY = scroll.position
                         scroll.snap(scroll.position + dy)
+                        cascadePosY = scroll.position
                         autoReturnAt = 0L
                     }
                 }
