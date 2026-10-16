@@ -13,22 +13,36 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+
+      - name: Ensure Android SDK 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          command -v sdkmanager
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
       - name: Unit tests
         run: gradle --no-daemon testDebugUnitTest
+
       - name: Build unsigned release
         run: gradle --no-daemon assembleRelease
+
       - name: SHA-256
         run: |
           sha256sum app/build/outputs/apk/release/app-release-unsigned.apk | tee app/build/outputs/apk/release/SHA256SUMS.txt
-          printf 'commit=%s\\n' "$GITHUB_SHA" | tee app/build/outputs/apk/release/BUILD_INFO.txt
+          printf 'commit=%s\nversion=0.1.0\n' "$GITHUB_SHA" | tee app/build/outputs/apk/release/BUILD_INFO.txt
+
       - uses: actions/upload-artifact@v4
         with:
           name: psa-lyric-unsigned-${{ github.sha }}
