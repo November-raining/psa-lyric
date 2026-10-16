@@ -15,8 +15,8 @@ object Prefs {
     const val DEFAULT_Y = 10
     const val DEFAULT_WIDTH = 535
     const val DEFAULT_HEIGHT = 700
-    const val DEFAULT_GLOW_INTENSITY = 220
-    const val DEFAULT_GAUSSIAN_BLUR_STRENGTH = 100
+    const val DEFAULT_GLOW_INTENSITY = 260
+    const val DEFAULT_GAUSSIAN_BLUR_STRENGTH = 200
     const val DEFAULT_GAUSSIAN_BLUR_DISTANCE_BOOST = 100
     private fun p(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 

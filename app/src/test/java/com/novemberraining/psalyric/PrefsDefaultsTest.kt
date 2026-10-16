@@ -12,8 +12,8 @@ class PrefsDefaultsTest {
         assertEquals(10, Prefs.DEFAULT_Y)
         assertEquals(535, Prefs.DEFAULT_WIDTH)
         assertEquals(700, Prefs.DEFAULT_HEIGHT)
-        assertEquals(220, Prefs.DEFAULT_GLOW_INTENSITY)
-        assertEquals(100, Prefs.DEFAULT_GAUSSIAN_BLUR_STRENGTH)
+        assertEquals(260, Prefs.DEFAULT_GLOW_INTENSITY)
+        assertEquals(200, Prefs.DEFAULT_GAUSSIAN_BLUR_STRENGTH)
         assertEquals(100, Prefs.DEFAULT_GAUSSIAN_BLUR_DISTANCE_BOOST)
     }
 }

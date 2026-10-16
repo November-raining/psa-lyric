@@ -11,8 +11,8 @@ android {
         applicationId = "com.novemberraining.psalyric"
         minSdk = 28
         targetSdk = 28
-        versionCode = 18
-        versionName = "0.1.17"
+        versionCode = 19
+        versionName = "0.1.18"
     }
 
     buildTypes {
