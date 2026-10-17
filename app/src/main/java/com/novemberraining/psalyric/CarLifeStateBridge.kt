@@ -9,6 +9,7 @@ import android.os.SystemClock
 data class CarLifeBridgeSnapshot(
     val foreground: Boolean = false,
     val connected: Boolean = false,
+    val enabled: Boolean = true,
     val sentElapsedMs: Long = 0L,
     val receivedElapsedMs: Long = 0L
 ) {
@@ -35,6 +36,7 @@ class CarLifeStateBridge(
             "com.novemberraining.psalyric.action.CARLIFE_STATE"
         const val EXTRA_FOREGROUND = "foreground"
         const val EXTRA_CONNECTED = "connected"
+        const val EXTRA_ENABLED = "bridge_enabled"
         const val EXTRA_SENT_ELAPSED = "sent_elapsed"
     }
 
@@ -47,6 +49,9 @@ class CarLifeStateBridge(
             val snapshot = CarLifeBridgeSnapshot(
                 foreground = intent.getBooleanExtra(EXTRA_FOREGROUND, false),
                 connected = intent.getBooleanExtra(EXTRA_CONNECTED, false),
+                // Older bridge builds did not send this extra; they were
+                // effectively always enabled, so default true is compatible.
+                enabled = intent.getBooleanExtra(EXTRA_ENABLED, true),
                 sentElapsedMs = intent.getLongExtra(EXTRA_SENT_ELAPSED, 0L),
                 receivedElapsedMs = SystemClock.elapsedRealtime()
             )

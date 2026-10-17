@@ -40,22 +40,25 @@ class OverlayService : Service() {
     private lateinit var carLifeBridge: CarLifeStateBridge
     private var homes: Set<String> = emptySet()
 
-    private val visibilityTick = object : Runnable {
+    private val bridgeWatchdog = object : Runnable {
         override fun run() {
-            if (Prefs.carLifeOnlyCard(this@OverlayService)) {
-                // Event broadcasts are the primary path. This low-rate request is
-                // only a watchdog for a lost process/broadcast or service restart.
-                carLifeBridge.requestState()
-            }
+            // Explicit CarLife broadcasts are the primary path. This request is
+            // only a low-rate recovery path for lost broadcasts/process restarts
+            // and also keeps the CarLife-side enable switch authoritative.
+            if (::carLifeBridge.isInitialized) carLifeBridge.requestState()
             syncVisibility()
-            handler.postDelayed(
-                this,
-                if (Prefs.carLifeOnlyCard(this@OverlayService)) {
-                    BRIDGE_WATCHDOG_MS
-                } else {
-                    LEGACY_VISIBILITY_POLL_MS
-                }
-            )
+            handler.postDelayed(this, BRIDGE_WATCHDOG_MS)
+        }
+    }
+
+    private val legacyVisibilityTick = object : Runnable {
+        override fun run() {
+            // Only the optional legacy Launcher-only mode still needs the
+            // 500 ms UsageStats foreground poll.
+            if (!Prefs.carLifeOnlyCard(this@OverlayService)) {
+                syncVisibility()
+            }
+            handler.postDelayed(this, LEGACY_VISIBILITY_POLL_MS)
         }
     }
 
@@ -72,7 +75,8 @@ class OverlayService : Service() {
             syncVisibility()
         }
         carLifeBridge.start()
-        handler.post(visibilityTick)
+        handler.post(bridgeWatchdog)
+        handler.post(legacyVisibilityTick)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -90,7 +94,7 @@ class OverlayService : Service() {
                 ScreenCaptureController.start(this, intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED), data)
             }
         }
-        if (::carLifeBridge.isInitialized && Prefs.carLifeOnlyCard(this)) {
+        if (::carLifeBridge.isInitialized) {
             carLifeBridge.requestState()
         }
         syncVisibility()
@@ -98,7 +102,8 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
-        handler.removeCallbacks(visibilityTick)
+        handler.removeCallbacks(bridgeWatchdog)
+        handler.removeCallbacks(legacyVisibilityTick)
         if (::carLifeBridge.isInitialized) carLifeBridge.stop()
         remove(main)
         remove(strip)
@@ -170,53 +175,67 @@ class OverlayService : Service() {
 
         val carLifeOnly = Prefs.carLifeOnlyCard(this)
         val now = android.os.SystemClock.elapsedRealtime()
+        val bridge = if (::carLifeBridge.isInitialized) {
+            carLifeBridge.snapshot()
+        } else {
+            CarLifeBridgeSnapshot()
+        }
+        val bridgeFresh = bridge.isFresh(now, BRIDGE_STALE_MS)
+
+        // A stale/missing bridge remains backward-compatible (enabled=true),
+        // but default CarLife-only mode still fails closed to TOP_STRIP because
+        // foreground/connected are not trusted until a fresh state arrives.
+        val bridgeEnabled = !bridgeFresh || bridge.enabled
 
         val foreground: String
         val connected: Boolean
 
         if (carLifeOnly) {
-            val bridge = if (::carLifeBridge.isInitialized) {
-                carLifeBridge.snapshot()
-            } else {
-                CarLifeBridgeSnapshot()
-            }
-            val fresh = bridge.isFresh(now, BRIDGE_STALE_MS)
-
-            // Fail closed when the bridge is stale: the large card is allowed
-            // only when CarLife has positively reported both foreground=true
-            // and connected=true. The watchdog will request a fresh state.
-            foreground = if (fresh && bridge.foreground) {
+            foreground = if (bridgeFresh && bridge.foreground) {
                 OverlayVisibilityPolicy.CARLIFE_HU_PACKAGE
             } else {
                 ""
             }
-            connected = fresh && bridge.connected
+            connected = bridgeFresh && bridge.connected
         } else {
-            // Compatibility mode keeps the exact pre-bridge behavior.
+            // Compatibility mode keeps the exact pre-bridge foreground rule,
+            // while a fresh explicit CarLife-side disable still hides PSA UI.
             foreground = ForegroundAppDetector.foregroundPackage(this)
             connected = true
+        }
+
+        val presentation = OverlayVisibilityPolicy.presentation(
+            bridgeEnabled = bridgeEnabled,
+            carLifeOnlyCard = carLifeOnly,
+            foregroundPackage = foreground,
+            carLifeConnected = connected,
+            homePackages = homes
+        )
+
+        if (presentation == OverlayPresentation.HIDDEN) {
+            main?.visibility = android.view.View.GONE
+            strip?.visibility = android.view.View.GONE
+            return
         }
 
         ensureWindows(foreground)
 
         // On this PSA ROM, WindowManager.getSize() keeps reporting the
         // application/usable width that excludes the OEM left navigation rail.
-        // When the event bridge says connected CarLife is really foreground,
-        // getRealSize() maps the preset against the physical 1920×720 panel.
-        if (!carLifeOnly || (foreground == OverlayVisibilityPolicy.CARLIFE_HU_PACKAGE && connected)) {
+        // A visible CarLife card uses the physical 1920×720 display space.
+        if (presentation == OverlayPresentation.CARD) {
             applyMainGeometry(foreground)
         }
         syncFlags()
 
-        val presentation = OverlayVisibilityPolicy.presentation(
-            carLifeOnlyCard = carLifeOnly,
-            foregroundPackage = foreground,
-            carLifeConnected = connected,
-            homePackages = homes
-        )
         val showCard = presentation == OverlayPresentation.CARD
         main?.visibility = if (showCard) android.view.View.VISIBLE else android.view.View.GONE
-        strip?.visibility = if (showCard) android.view.View.GONE else android.view.View.VISIBLE
+        strip?.visibility =
+            if (presentation == OverlayPresentation.TOP_STRIP) {
+                android.view.View.VISIBLE
+            } else {
+                android.view.View.GONE
+            }
     }
 
     private fun overlayDisplaySize(foregroundPackage: String): OverlayDisplaySize {
