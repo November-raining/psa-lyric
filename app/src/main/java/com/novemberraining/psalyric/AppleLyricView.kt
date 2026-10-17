@@ -1,6 +1,7 @@
 package com.novemberraining.psalyric
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.*
 import android.os.SystemClock
 import android.view.Choreographer
@@ -81,6 +82,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
     private var scrubbingProgress = false
     private var scrubPositionMs = 0L
     private var pressedControlIndex = -1
+    private var artworkPressed = false
 
     private val lyricTop get() = height * 0.19f
     private val lyricBottom get() = height * 0.82f
@@ -945,6 +947,27 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
         c.drawRect(x + 10*s*dir - 2*s, y - 13*s, x + 10*s*dir + 2*s, y + 13*s, shapePaint)
     }
 
+    private fun isArtworkHit(x: Float, y: Float): Boolean {
+        if (PlaybackStore.snapshot.artwork == null) return false
+        val scale = height / 700f
+        val size = 78f * scale
+        val right = width - 20f * scale
+        val top = 18f * scale
+        return x >= right - size && x <= right && y >= top && y <= top + size
+    }
+
+    private fun openPlayingApp() {
+        val playerPackage = PlaybackStore.snapshot.packageName
+        if (playerPackage.isBlank() || playerPackage == context.packageName) return
+        try {
+            val launch = context.packageManager.getLaunchIntentForPackage(playerPackage) ?: return
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(launch)
+        } catch (_: Exception) {
+            // Missing/unlaunchable player: leave overlay and playback unchanged.
+        }
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (Prefs.touchThrough(context)) return false
         when (event.actionMasked) {
@@ -952,6 +975,14 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
                 parent?.requestDisallowInterceptTouchEvent(true)
                 downX = event.x
                 downY = event.y
+                artworkPressed = isArtworkHit(event.x, event.y)
+                if (artworkPressed) {
+                    scrubbingProgress = false
+                    pressedControlIndex = -1
+                    velocity?.recycle()
+                    velocity = null
+                    return true
+                }
                 lastY = event.y
                 browsing = false
                 autoReturnAt = 0L
@@ -998,6 +1029,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             }
 
             MotionEvent.ACTION_MOVE -> {
+                if (artworkPressed) return true
                 if (scrubbingProgress) {
                     val duration = PlaybackStore.snapshot.durationMs
                     if (duration > 0L) {
@@ -1034,6 +1066,12 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             }
 
             MotionEvent.ACTION_UP -> {
+                if (artworkPressed) {
+                    artworkPressed = false
+                    val moved = Math.hypot((event.x - downX).toDouble(), (event.y - downY).toDouble())
+                    if (moved <= 15f * (height / 700f) && isArtworkHit(event.x, event.y)) openPlayingApp()
+                    return true
+                }
                 if (scrubbingProgress) {
                     val duration = PlaybackStore.snapshot.durationMs
                     if (duration > 0L) {
@@ -1094,6 +1132,7 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                artworkPressed = false
                 velocity?.recycle()
                 velocity = null
                 browsing = false
