@@ -84,8 +84,9 @@ class MainActivity : Activity() {
             refreshService()
         }
         note(
-            "开启：只有 CarLife（com.baidu.carlifevehicle）前台显示右侧大卡片，" +
-                "Launcher、设置及其它车机界面都切顶部细歌词；" +
+            "开启：仅 CarLife 已连接手机且处于前台时显示右侧大卡片；" +
+                "CarLife 未连接、Launcher、设置及其它车机界面都显示顶部细歌词。" +
+                "切换由 CarLife 状态桥即时驱动，并有低频 watchdog 自动校正；" +
                 "关闭：保持旧逻辑，仅回到车机 Launcher 时切顶部细歌词。"
         )
         toggle("悬浮窗触摸穿透", Prefs.touchThrough(this)) {
@@ -356,6 +357,16 @@ class MainActivity : Activity() {
             if (lyric.attempts.isNotBlank()) {
                 append("\n匹配链：").append(lyric.attempts)
             }
+            val bridge = CarLifeBridgeStore.snapshot
+            val bridgeAge = if (bridge.receivedElapsedMs > 0L) {
+                (android.os.SystemClock.elapsedRealtime() - bridge.receivedElapsedMs)
+                    .coerceAtLeast(0L)
+            } else {
+                -1L
+            }
+            append("\nCarLife桥：foreground=").append(bridge.foreground)
+                .append(" connected=").append(bridge.connected)
+                .append(" age=").append(bridgeAge).append("ms")
             append("\n前台应用：")
             when {
                 !foreground.usageAccess -> append("未授权 [usage=NO]")
