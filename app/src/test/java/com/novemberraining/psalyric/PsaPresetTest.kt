@@ -11,4 +11,9 @@ class PsaPresetTest {
         assertEquals(535, g.width)
         assertEquals(700, g.height)
     }
+
+    @Test fun nativeCarLifeCornerRadiusMatchesRealCard() {
+        assertEquals(30f, PsaPreset.cardCornerRadius(700), 0.0001f)
+        assertEquals(15f, PsaPreset.cardCornerRadius(350), 0.0001f)
+    }
 }

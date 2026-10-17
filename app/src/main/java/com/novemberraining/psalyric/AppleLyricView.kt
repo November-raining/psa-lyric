@@ -40,6 +40,9 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val metaPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val shapePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val backgroundPaint = Paint(
+        Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG or Paint.FILTER_BITMAP_FLAG
+    )
     private val scroll = Spring1D()
     private val scales = HashMap<Int, Spring1D>()
     private val wordMotions = HashMap<Int, AppleWordMotion>()
@@ -146,23 +149,49 @@ class AppleLyricView(context: Context) : View(context), Choreographer.FrameCallb
     }
 
     private fun drawBackground(canvas: Canvas, snapshot: PlaybackSnapshot) {
-        val radius = 22f * height / 700f
+        val radius = PsaPreset.cardCornerRadius(height)
         val rect = RectF(0f, 0f, width.toFloat(), height.toFloat())
-        val path = Path().apply { addRoundRect(rect, radius, radius, Path.Direction.CW) }
-        canvas.save()
-        canvas.clipPath(path)
-        val chosen = if (Prefs.backgroundMode(context) == "screen") ScreenBackdrop.blurred else ArtworkBackdrop.blurred
-        if (chosen != null) {
-            val src = Rect(0, 0, chosen.width, chosen.height)
-            val dst = RectF(0f, 0f, width.toFloat(), height.toFloat())
-            shapePaint.alpha = 255
-            canvas.drawBitmap(chosen, src, dst, shapePaint)
+        val chosen = if (Prefs.backgroundMode(context) == "screen") {
+            ScreenBackdrop.blurred
         } else {
-            canvas.drawColor(Color.rgb(30, 43, 65))
+            ArtworkBackdrop.blurred
         }
-        shapePaint.color = 0x60071420
-        canvas.drawRect(rect, shapePaint)
-        canvas.restore()
+
+        // Do not use clipPath() for the outer card edge. On the Android 9
+        // software canvas the clip boundary is binary and produces visible
+        // stair-stepping at the four rounded corners. Drawing the background
+        // itself as an anti-aliased round rect preserves the same content while
+        // giving the compositor fractional edge coverage.
+        backgroundPaint.style = Paint.Style.FILL
+        backgroundPaint.alpha = 255
+        backgroundPaint.colorFilter = null
+        backgroundPaint.maskFilter = null
+
+        if (chosen != null) {
+            val shader = BitmapShader(
+                chosen,
+                Shader.TileMode.CLAMP,
+                Shader.TileMode.CLAMP
+            )
+            val matrix = Matrix().apply {
+                setScale(
+                    width.toFloat() / chosen.width.coerceAtLeast(1),
+                    height.toFloat() / chosen.height.coerceAtLeast(1)
+                )
+            }
+            shader.setLocalMatrix(matrix)
+            backgroundPaint.shader = shader
+            canvas.drawRoundRect(rect, radius, radius, backgroundPaint)
+            backgroundPaint.shader = null
+        } else {
+            backgroundPaint.shader = null
+            backgroundPaint.color = Color.rgb(30, 43, 65)
+            canvas.drawRoundRect(rect, radius, radius, backgroundPaint)
+        }
+
+        backgroundPaint.shader = null
+        backgroundPaint.color = 0x60071420
+        canvas.drawRoundRect(rect, radius, radius, backgroundPaint)
     }
 
     private fun drawHeader(canvas: Canvas, s: PlaybackSnapshot) {
