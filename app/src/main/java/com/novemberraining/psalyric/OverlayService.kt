@@ -21,6 +21,9 @@ class OverlayService : Service() {
         const val EXTRA_DATA = "projection_data"
         private const val CHANNEL = "psa_lyric"
         private const val NOTIFICATION = 81
+        private const val LEGACY_VISIBILITY_POLL_MS = 500L
+        private const val BRIDGE_WATCHDOG_MS = 3000L
+        private const val BRIDGE_STALE_MS = 6500L
 
         fun start(context: Context) {
             val i = Intent(context, OverlayService::class.java).setAction(ACTION_REFRESH)
@@ -34,12 +37,25 @@ class OverlayService : Service() {
     private var strip: TopLyricStripView? = null
     private var stripParams: WindowManager.LayoutParams? = null
     private val handler = Handler(Looper.getMainLooper())
+    private lateinit var carLifeBridge: CarLifeStateBridge
     private var homes: Set<String> = emptySet()
 
     private val visibilityTick = object : Runnable {
         override fun run() {
+            if (Prefs.carLifeOnlyCard(this@OverlayService)) {
+                // Event broadcasts are the primary path. This low-rate request is
+                // only a watchdog for a lost process/broadcast or service restart.
+                carLifeBridge.requestState()
+            }
             syncVisibility()
-            handler.postDelayed(this, 500L)
+            handler.postDelayed(
+                this,
+                if (Prefs.carLifeOnlyCard(this@OverlayService)) {
+                    BRIDGE_WATCHDOG_MS
+                } else {
+                    LEGACY_VISIBILITY_POLL_MS
+                }
+            )
         }
     }
 
@@ -50,6 +66,12 @@ class OverlayService : Service() {
         startForeground(NOTIFICATION, notification())
         homes = ForegroundAppDetector.homePackages(this)
         LyricsEngine.start(this)
+        carLifeBridge = CarLifeStateBridge(this) {
+            // Normal CarLife foreground/connection transitions arrive here
+            // immediately, so CARD <-> TOP_STRIP no longer waits for polling.
+            syncVisibility()
+        }
+        carLifeBridge.start()
         handler.post(visibilityTick)
     }
 
@@ -68,15 +90,16 @@ class OverlayService : Service() {
                 ScreenCaptureController.start(this, intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED), data)
             }
         }
-        val foreground = ForegroundAppDetector.foregroundPackage(this)
-        ensureWindows(foreground)
-        applyMainGeometry(foreground)
-        syncFlags()
+        if (::carLifeBridge.isInitialized && Prefs.carLifeOnlyCard(this)) {
+            carLifeBridge.requestState()
+        }
+        syncVisibility()
         return START_STICKY
     }
 
     override fun onDestroy() {
         handler.removeCallbacks(visibilityTick)
+        if (::carLifeBridge.isInitialized) carLifeBridge.stop()
         remove(main)
         remove(strip)
         main = null
@@ -144,24 +167,51 @@ class OverlayService : Service() {
 
     private fun syncVisibility() {
         if (!Prefs.enabled(this)) return
-        val foreground = ForegroundAppDetector.foregroundPackage(this)
+
+        val carLifeOnly = Prefs.carLifeOnlyCard(this)
+        val now = android.os.SystemClock.elapsedRealtime()
+
+        val foreground: String
+        val connected: Boolean
+
+        if (carLifeOnly) {
+            val bridge = if (::carLifeBridge.isInitialized) {
+                carLifeBridge.snapshot()
+            } else {
+                CarLifeBridgeSnapshot()
+            }
+            val fresh = bridge.isFresh(now, BRIDGE_STALE_MS)
+
+            // Fail closed when the bridge is stale: the large card is allowed
+            // only when CarLife has positively reported both foreground=true
+            // and connected=true. The watchdog will request a fresh state.
+            foreground = if (fresh && bridge.foreground) {
+                OverlayVisibilityPolicy.CARLIFE_HU_PACKAGE
+            } else {
+                ""
+            }
+            connected = fresh && bridge.connected
+        } else {
+            // Compatibility mode keeps the exact pre-bridge behavior.
+            foreground = ForegroundAppDetector.foregroundPackage(this)
+            connected = true
+        }
+
         ensureWindows(foreground)
 
         // On this PSA ROM, WindowManager.getSize() keeps reporting the
         // application/usable width that excludes the OEM left navigation rail.
-        // In true full-screen CarLife that rail is visually gone, but getSize()
-        // can still return the narrower logical width. Scaling a 1920px preset
-        // against that stale/narrow app width shifts the card left and shrinks
-        // it. While CarLife is foreground, use getRealSize() instead so the
-        // preset is mapped against the physical 1920×720 panel. Outside CarLife
-        // keep the old app-size mapping, which is already correct with the
-        // system navigation rail present.
-        applyMainGeometry(foreground)
+        // When the event bridge says connected CarLife is really foreground,
+        // getRealSize() maps the preset against the physical 1920×720 panel.
+        if (!carLifeOnly || (foreground == OverlayVisibilityPolicy.CARLIFE_HU_PACKAGE && connected)) {
+            applyMainGeometry(foreground)
+        }
         syncFlags()
 
         val presentation = OverlayVisibilityPolicy.presentation(
-            carLifeOnlyCard = Prefs.carLifeOnlyCard(this),
+            carLifeOnlyCard = carLifeOnly,
             foregroundPackage = foreground,
+            carLifeConnected = connected,
             homePackages = homes
         )
         val showCard = presentation == OverlayPresentation.CARD
