@@ -68,8 +68,9 @@ class OverlayService : Service() {
                 ScreenCaptureController.start(this, intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED), data)
             }
         }
-        ensureWindows()
-        applyMainGeometry()
+        val foreground = ForegroundAppDetector.foregroundPackage(this)
+        ensureWindows(foreground)
+        applyMainGeometry(foreground)
         syncFlags()
         return START_STICKY
     }
@@ -86,12 +87,12 @@ class OverlayService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun ensureWindows() {
+    private fun ensureWindows(foregroundPackage: String = "") {
         if (main == null) {
-            val displaySize = Point().also { wm.defaultDisplay.getSize(it) }
+            val displaySize = overlayDisplaySize(foregroundPackage)
             val g = PsaPreset.scale(
                 Prefs.x(this), Prefs.y(this), Prefs.width(this), Prefs.height(this),
-                displaySize.x, displaySize.y
+                displaySize.width, displaySize.height
             )
             val view = AppleLyricView(this)
             val p = WindowManager.LayoutParams(
@@ -126,12 +127,12 @@ class OverlayService : Service() {
         }
     }
 
-    private fun applyMainGeometry() {
+    private fun applyMainGeometry(foregroundPackage: String = "") {
         val p = mainParams ?: return
-        val displaySize = Point().also { wm.defaultDisplay.getSize(it) }
+        val displaySize = overlayDisplaySize(foregroundPackage)
         val g = PsaPreset.scale(
             Prefs.x(this), Prefs.y(this), Prefs.width(this), Prefs.height(this),
-            displaySize.x, displaySize.y
+            displaySize.width, displaySize.height
         )
         if (p.x == g.x && p.y == g.y && p.width == g.width && p.height == g.height) return
         p.x = g.x
@@ -143,18 +144,21 @@ class OverlayService : Service() {
 
     private fun syncVisibility() {
         if (!Prefs.enabled(this)) return
-        ensureWindows()
+        val foreground = ForegroundAppDetector.foregroundPackage(this)
+        ensureWindows(foreground)
 
-        // The PSA ROM changes the logical display width when the system left
-        // navigation rail disappears in full-screen CarLife. The overlay used
-        // to keep the geometry calculated before that transition, which left
-        // the card shifted left by approximately the rail width. Re-evaluate
-        // against the current display on every visibility tick; updateViewLayout
-        // is still only called when the calculated geometry actually changes.
-        applyMainGeometry()
+        // On this PSA ROM, WindowManager.getSize() keeps reporting the
+        // application/usable width that excludes the OEM left navigation rail.
+        // In true full-screen CarLife that rail is visually gone, but getSize()
+        // can still return the narrower logical width. Scaling a 1920px preset
+        // against that stale/narrow app width shifts the card left and shrinks
+        // it. While CarLife is foreground, use getRealSize() instead so the
+        // preset is mapped against the physical 1920×720 panel. Outside CarLife
+        // keep the old app-size mapping, which is already correct with the
+        // system navigation rail present.
+        applyMainGeometry(foreground)
         syncFlags()
 
-        val foreground = ForegroundAppDetector.foregroundPackage(this)
         val presentation = OverlayVisibilityPolicy.presentation(
             carLifeOnlyCard = Prefs.carLifeOnlyCard(this),
             foregroundPackage = foreground,
@@ -163,6 +167,25 @@ class OverlayService : Service() {
         val showCard = presentation == OverlayPresentation.CARD
         main?.visibility = if (showCard) android.view.View.VISIBLE else android.view.View.GONE
         strip?.visibility = if (showCard) android.view.View.GONE else android.view.View.VISIBLE
+    }
+
+    private fun overlayDisplaySize(foregroundPackage: String): OverlayDisplaySize {
+        val app = Point().also { wm.defaultDisplay.getSize(it) }
+        val real = Point().also {
+            try {
+                wm.defaultDisplay.getRealSize(it)
+            } catch (_: Throwable) {
+                it.set(app.x, app.y)
+            }
+        }
+        return OverlayDisplaySpace.choose(
+            appWidth = app.x,
+            appHeight = app.y,
+            realWidth = real.x,
+            realHeight = real.y,
+            carLifeForeground =
+                foregroundPackage == OverlayVisibilityPolicy.CARLIFE_HU_PACKAGE
+        )
     }
 
     private fun syncFlags() {
