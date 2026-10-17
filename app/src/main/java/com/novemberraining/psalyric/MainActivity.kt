@@ -84,10 +84,11 @@ class MainActivity : Activity() {
             refreshService()
         }
         note(
-            "开启：仅 CarLife 已连接手机且处于前台时显示右侧大卡片；" +
-                "CarLife 未连接、Launcher、设置及其它车机界面都显示顶部细歌词。" +
-                "切换由 CarLife 状态桥即时驱动，并有低频 watchdog 自动校正；" +
-                "关闭：保持旧逻辑，仅回到车机 Launcher 时切顶部细歌词。"
+            "开启：CarLife 侧 Bridge 开关打开时，仅 CarLife 已连接手机且处于前台显示右侧大卡片；" +
+                "未连接或离开 CarLife 时显示顶部细歌词。CarLife 设置中关闭 Bridge 后，" +
+                "PSA 大卡片和顶部细歌词都会隐藏，直接恢复 CarLife 原生卡片。" +
+                "状态由事件即时驱动，并有低频 watchdog 自动校正；" +
+                "本开关关闭时仍保留旧的 Launcher-only 显示逻辑，但 CarLife 侧显式关闭 Bridge 始终优先。"
         )
         toggle("悬浮窗触摸穿透", Prefs.touchThrough(this)) {
             Prefs.setTouchThrough(this, it); refreshService()
@@ -364,7 +365,8 @@ class MainActivity : Activity() {
             } else {
                 -1L
             }
-            append("\nCarLife桥：foreground=").append(bridge.foreground)
+            append("\nCarLife桥：enabled=").append(bridge.enabled)
+                .append(" foreground=").append(bridge.foreground)
                 .append(" connected=").append(bridge.connected)
                 .append(" age=").append(bridgeAge).append("ms")
             append("\n前台应用：")
