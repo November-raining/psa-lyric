@@ -144,11 +144,25 @@ class OverlayService : Service() {
     private fun syncVisibility() {
         if (!Prefs.enabled(this)) return
         ensureWindows()
+
+        // The PSA ROM changes the logical display width when the system left
+        // navigation rail disappears in full-screen CarLife. The overlay used
+        // to keep the geometry calculated before that transition, which left
+        // the card shifted left by approximately the rail width. Re-evaluate
+        // against the current display on every visibility tick; updateViewLayout
+        // is still only called when the calculated geometry actually changes.
+        applyMainGeometry()
         syncFlags()
+
         val foreground = ForegroundAppDetector.foregroundPackage(this)
-        val home = Prefs.launcherStrip(this) && foreground.isNotBlank() && foreground in homes
-        main?.visibility = if (home) android.view.View.GONE else android.view.View.VISIBLE
-        strip?.visibility = if (home) android.view.View.VISIBLE else android.view.View.GONE
+        val presentation = OverlayVisibilityPolicy.presentation(
+            carLifeOnlyCard = Prefs.carLifeOnlyCard(this),
+            foregroundPackage = foreground,
+            homePackages = homes
+        )
+        val showCard = presentation == OverlayPresentation.CARD
+        main?.visibility = if (showCard) android.view.View.VISIBLE else android.view.View.GONE
+        strip?.visibility = if (showCard) android.view.View.GONE else android.view.View.VISIBLE
     }
 
     private fun syncFlags() {
