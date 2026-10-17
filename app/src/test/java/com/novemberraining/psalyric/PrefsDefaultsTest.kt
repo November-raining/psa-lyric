@@ -16,5 +16,6 @@ class PrefsDefaultsTest {
         assertEquals(260, Prefs.DEFAULT_GLOW_INTENSITY)
         assertEquals(200, Prefs.DEFAULT_GAUSSIAN_BLUR_STRENGTH)
         assertEquals(100, Prefs.DEFAULT_GAUSSIAN_BLUR_DISTANCE_BOOST)
+        assertEquals(true, Prefs.DEFAULT_CARLIFE_ONLY_CARD)
     }
 }
