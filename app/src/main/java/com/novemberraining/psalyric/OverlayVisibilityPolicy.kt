@@ -11,10 +11,14 @@ object OverlayVisibilityPolicy {
     fun presentation(
         carLifeOnlyCard: Boolean,
         foregroundPackage: String,
+        carLifeConnected: Boolean,
         homePackages: Set<String>
     ): OverlayPresentation {
         if (carLifeOnlyCard) {
-            return if (foregroundPackage == CARLIFE_HU_PACKAGE) {
+            return if (
+                foregroundPackage == CARLIFE_HU_PACKAGE &&
+                carLifeConnected
+            ) {
                 OverlayPresentation.CARD
             } else {
                 OverlayPresentation.TOP_STRIP
