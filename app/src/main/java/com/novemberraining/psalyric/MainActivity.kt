@@ -82,6 +82,9 @@ class MainActivity : Activity() {
         toggle("悬浮窗触摸穿透", Prefs.touchThrough(this)) {
             Prefs.setTouchThrough(this, it); refreshService()
         }
+
+        positionPresetChooser()
+
         seekWithReset(
             "横坐标 X", 0, 1920, Prefs.x(this), "",
             resetValue = Prefs.DEFAULT_X,
@@ -111,7 +114,11 @@ class MainActivity : Activity() {
             Prefs.setGeometry(this, Prefs.x(this), Prefs.y(this), Prefs.width(this), it)
         }
         button("应用位置 / 尺寸") { refreshService() }
-        note("以上为 1920×720 设计坐标；其它分辨率运行时按比例映射。")
+        note(
+            "以上为 1920×720 设计坐标；其它分辨率运行时按比例映射。" +
+                "右下预设允许 700 px 卡片从 Y=249 向屏幕下方自然溢出，" +
+                "与 CarLife 双卡界面的原音乐卡片裁切方式一致。"
+        )
 
         section("Apple 歌词动效")
         seekWithReset(
@@ -353,6 +360,70 @@ class MainActivity : Activity() {
                     .append(foreground.source).append("]")
             }
         }
+    }
+
+    private fun positionPresetChooser() {
+        val selected = Prefs.positionPreset(this)
+        val label = TextView(this).apply {
+            text = "初始位置预设"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(10), 0, dp(4))
+        }
+        root.addView(label)
+
+        val group = RadioGroup(this).apply {
+            orientation = RadioGroup.HORIZONTAL
+        }
+        val lowerRight = RadioButton(this).apply {
+            id = View.generateViewId()
+            text = "右下双卡（默认）"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+        }
+        val fullHeight = RadioButton(this).apply {
+            id = View.generateViewId()
+            text = "右侧全高（旧）"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+        }
+
+        group.addView(
+            lowerRight,
+            RadioGroup.LayoutParams(0, dp(48), 1f)
+        )
+        group.addView(
+            fullHeight,
+            RadioGroup.LayoutParams(0, dp(48), 1f)
+        )
+
+        when (selected) {
+            PsaPreset.PRESET_LOWER_RIGHT -> group.check(lowerRight.id)
+            PsaPreset.PRESET_FULL_HEIGHT -> group.check(fullHeight.id)
+        }
+
+        group.setOnCheckedChangeListener { _, checkedId ->
+            val preset = when (checkedId) {
+                lowerRight.id -> PsaPreset.PRESET_LOWER_RIGHT
+                fullHeight.id -> PsaPreset.PRESET_FULL_HEIGHT
+                else -> return@setOnCheckedChangeListener
+            }
+            if (Prefs.positionPreset(this) == preset) return@setOnCheckedChangeListener
+            Prefs.setPositionPreset(this, preset)
+            refreshService()
+            rebuild()
+        }
+
+        root.addView(group)
+        val current = when (selected) {
+            PsaPreset.PRESET_FULL_HEIGHT -> "右侧全高：1373 / 10 / 535×700"
+            PsaPreset.PRESET_CUSTOM -> "自定义：${Prefs.x(this)} / ${Prefs.y(this)} / ${Prefs.width(this)}×${Prefs.height(this)}"
+            else -> "右下双卡：1373 / 249 / 535×700（下方允许溢出）"
+        }
+        note(
+            "当前：$current。手动调整下方 X/Y/宽高后会进入自定义；" +
+                "再次选择任一预设即可恢复对应的像素基准。"
+        )
     }
 
     private fun button(label: String, onClick: () -> Unit) {
