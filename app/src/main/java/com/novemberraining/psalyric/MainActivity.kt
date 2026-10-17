@@ -76,9 +76,18 @@ class MainActivity : Activity() {
             if (it && Settings.canDrawOverlays(this)) OverlayService.start(this)
             else if (!it) stopService(Intent(this, OverlayService::class.java))
         }
-        toggle("回到车机 Launcher 自动切顶部细歌词", Prefs.launcherStrip(this)) {
-            Prefs.setLauncherStrip(this, it); refreshService()
+        toggle(
+            "仅 CarLife 显示大卡片（其他界面顶部细歌词）",
+            Prefs.carLifeOnlyCard(this)
+        ) {
+            Prefs.setCarLifeOnlyCard(this, it)
+            refreshService()
         }
+        note(
+            "开启：只有 CarLife（com.baidu.carlifevehicle）前台显示右侧大卡片，" +
+                "Launcher、设置及其它车机界面都切顶部细歌词；" +
+                "关闭：保持旧逻辑，仅回到车机 Launcher 时切顶部细歌词。"
+        )
         toggle("悬浮窗触摸穿透", Prefs.touchThrough(this)) {
             Prefs.setTouchThrough(this, it); refreshService()
         }
