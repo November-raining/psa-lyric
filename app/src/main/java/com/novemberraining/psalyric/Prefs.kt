@@ -19,6 +19,7 @@ object Prefs {
     const val DEFAULT_GLOW_INTENSITY = 260
     const val DEFAULT_GAUSSIAN_BLUR_STRENGTH = 200
     const val DEFAULT_GAUSSIAN_BLUR_DISTANCE_BOOST = 100
+    const val DEFAULT_CARLIFE_ONLY_CARD = true
     private fun p(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
     fun enabled(c: Context) = p(c).getBoolean("enabled", false)
@@ -29,6 +30,11 @@ object Prefs {
 
     fun launcherStrip(c: Context) = p(c).getBoolean("launcher_strip", true)
     fun setLauncherStrip(c: Context, v: Boolean) = p(c).edit().putBoolean("launcher_strip", v).apply()
+
+    fun carLifeOnlyCard(c: Context) =
+        p(c).getBoolean("carlife_only_card", DEFAULT_CARLIFE_ONLY_CARD)
+    fun setCarLifeOnlyCard(c: Context, v: Boolean) =
+        p(c).edit().putBoolean("carlife_only_card", v).apply()
 
     fun backgroundMode(c: Context) = p(c).getString("background_mode", "cover") ?: "cover"
     fun setBackgroundMode(c: Context, v: String) = p(c).edit().putString("background_mode", v).apply()
