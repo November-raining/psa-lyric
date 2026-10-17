@@ -11,8 +11,9 @@ object Prefs {
     const val DEFAULT_FONT_SIZE = 29
     const val DEFAULT_FONT_WEIGHT = 600
     const val DEFAULT_LINE_SPACING = 0.9f
+    const val DEFAULT_POSITION_PRESET = PsaPreset.PRESET_LOWER_RIGHT
     const val DEFAULT_X = 1373
-    const val DEFAULT_Y = 10
+    const val DEFAULT_Y = 249
     const val DEFAULT_WIDTH = 535
     const val DEFAULT_HEIGHT = 700
     const val DEFAULT_GLOW_INTENSITY = 260
@@ -99,18 +100,68 @@ object Prefs {
             .putString("secondary_lyric_mode", LyricSecondaryRules.normalizeMode(v))
             .apply()
 
-    fun x(c: Context) = p(c).getInt("x", DEFAULT_X)
-    fun y(c: Context) = p(c).getInt("y", DEFAULT_Y)
-    fun width(c: Context) = p(c).getInt("width", DEFAULT_WIDTH).coerceAtLeast(260)
-    fun height(c: Context) = p(c).getInt("height", DEFAULT_HEIGHT).coerceAtLeast(300)
+    private fun ensurePositionPreset(c: Context) {
+        val prefs = p(c)
+        if (prefs.contains("position_preset")) return
+
+        // 0.1.20 changes the product default to the lower-right CarLife card.
+        // Existing installs did not have a preset key, so migrate them once to
+        // the new default instead of silently retaining the old y=10 geometry.
+        val g = PsaPreset.geometryForPreset(DEFAULT_POSITION_PRESET)
+        prefs.edit()
+            .putString("position_preset", DEFAULT_POSITION_PRESET)
+            .putInt("x", g.x)
+            .putInt("y", g.y)
+            .putInt("width", g.width)
+            .putInt("height", g.height)
+            .apply()
+    }
+
+    fun positionPreset(c: Context): String {
+        ensurePositionPreset(c)
+        return PsaPreset.normalizePreset(p(c).getString("position_preset", DEFAULT_POSITION_PRESET))
+    }
+
+    fun x(c: Context): Int {
+        ensurePositionPreset(c)
+        return p(c).getInt("x", DEFAULT_X)
+    }
+
+    fun y(c: Context): Int {
+        ensurePositionPreset(c)
+        return p(c).getInt("y", DEFAULT_Y)
+    }
+
+    fun width(c: Context): Int {
+        ensurePositionPreset(c)
+        return p(c).getInt("width", DEFAULT_WIDTH).coerceAtLeast(260)
+    }
+
+    fun height(c: Context): Int {
+        ensurePositionPreset(c)
+        return p(c).getInt("height", DEFAULT_HEIGHT).coerceAtLeast(300)
+    }
+
+    fun setPositionPreset(c: Context, preset: String) {
+        val normalized = PsaPreset.normalizePreset(preset)
+        val g = PsaPreset.geometryForPreset(normalized)
+        p(c).edit()
+            .putString("position_preset", normalized)
+            .putInt("x", g.x)
+            .putInt("y", g.y)
+            .putInt("width", g.width)
+            .putInt("height", g.height)
+            .apply()
+    }
 
     fun setGeometry(c: Context, x: Int, y: Int, width: Int, height: Int) {
         p(c).edit()
+            .putString("position_preset", PsaPreset.PRESET_CUSTOM)
             .putInt("x", x).putInt("y", y)
             .putInt("width", width.coerceAtLeast(260))
             .putInt("height", height.coerceAtLeast(300)).apply()
     }
 
     fun resetGeometry(c: Context) =
-        setGeometry(c, DEFAULT_X, DEFAULT_Y, DEFAULT_WIDTH, DEFAULT_HEIGHT)
+        setPositionPreset(c, DEFAULT_POSITION_PRESET)
 }
